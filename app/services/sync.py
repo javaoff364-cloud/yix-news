@@ -1,7 +1,7 @@
 import asyncio
 import traceback
 
-from app.news.rss import fetch_all_news
+from app.news.rss import get_latest_news
 from app.database.db import save_news
 
 
@@ -10,24 +10,21 @@ _sync_lock = asyncio.Lock()
 
 async def sync_news():
     """
-    Yangiliklarni yuklash va bazaga saqlash.
-
+    Yangiliklarni yuklaydi va bazaga saqlaydi.
     Bir vaqtning o'zida faqat bitta sync ishlaydi.
-    Xatolar Telegram bot pollingiga ta'sir qilmaydi.
     """
 
     if _sync_lock.locked():
-        print("⏳ Sync allaqachon ishlayapti. O'tkazib yuborildi.")
+        print("⏳ Sync allaqachon ishlayapti. Bu sync o'tkazib yuborildi.")
         return
 
     async with _sync_lock:
         print("🔄 NEWS SYNC BOSHLANDI...")
 
         try:
-            # RSS yig'ish maksimum 90 soniya.
             news_items = await asyncio.wait_for(
-                fetch_all_news(),
-                timeout=90
+                get_latest_news(),
+                timeout=120
             )
 
             if not news_items:
@@ -49,19 +46,19 @@ async def sync_news():
                         saved_count += 1
 
                 except asyncio.TimeoutError:
-                    print("⏰ Bitta yangilikni saqlash timeout bo'ldi.")
+                    print("⏰ Yangilikni bazaga saqlash timeout bo'ldi.")
 
                 except Exception as e:
-                    print(f"⚠️ Yangilikni saqlash xatosi: {e}")
+                    print(f"⚠️ Yangilikni saqlashda xato: {e}")
 
             print(
-                f"✅ SYNC TUGADI | "
+                f"✅ NEWS SYNC TUGADI | "
                 f"Topildi: {len(news_items)} | "
                 f"Saqlandi: {saved_count}"
             )
 
         except asyncio.TimeoutError:
-            print("⏰ NEWS SYNC 90 soniyadan oshdi.")
+            print("⏰ NEWS SYNC 120 sekunddan oshdi. To'xtatildi.")
 
         except asyncio.CancelledError:
             print("🛑 NEWS SYNC bekor qilindi.")
@@ -72,9 +69,9 @@ async def sync_news():
             traceback.print_exc()
 
 
-async def _run_sync_safely():
+async def _safe_sync():
     """
-    Sync task xatosi auto_sync loopini o'ldirmasligi uchun wrapper.
+    Background sync xato bersa ham asosiy bot ishlashda davom etadi.
     """
 
     try:
@@ -84,55 +81,13 @@ async def _run_sync_safely():
         raise
 
     except Exception as e:
-        print(f"❌ Background sync xatosi: {e}")
+        print(f"❌ Background sync exception: {e}")
         traceback.print_exc()
 
 
-async def auto_sync(interval: int = 600):
+def _sync_task_done(task):
     """
-    Har 10 daqiqada yangiliklarni yangilaydi.
-
-    Muhim:
-    auto_sync Telegram pollingni kutib turmaydi.
-    Sync xatosi botni to'xtatmaydi.
-    """
-
-    print(
-        f"⏱️ AUTO SYNC ISHLADI | "
-        f"Interval: {interval} sekund"
-    )
-
-    while True:
-        try:
-            await asyncio.sleep(interval)
-
-            print("⏰ 10 daqiqa o'tdi. Yangi sync boshlanmoqda...")
-
-            # Alohida task.
-            task = asyncio.create_task(
-                _run_sync_safely()
-            )
-
-            # Task exceptionlari yo'qolib ketmasligi uchun
-            # done callback qo'yamiz.
-            task.add_done_callback(
-                _background_task_done
-            )
-
-        except asyncio.CancelledError:
-            print("🛑 AUTO SYNC TO'XTATILDI.")
-            raise
-
-        except Exception as e:
-            print(f"❌ AUTO SYNC LOOP XATOSI: {e}")
-
-            # Loop o'lmasligi uchun.
-            await asyncio.sleep(5)
-
-
-def _background_task_done(task):
-    """
-    Background task tugaganda xatoni logga chiqaradi.
+    Background task ichidagi exceptionni ushlab qoladi.
     """
 
     try:
@@ -142,4 +97,41 @@ def _background_task_done(task):
         pass
 
     except Exception as e:
-        print(f"❌ Background task exception: {e}")
+        print(f"❌ Background sync task xatosi: {e}")
+
+
+async def auto_sync(interval: int = 600):
+    """
+    Har 10 daqiqada yangiliklarni yangilaydi.
+    """
+
+    print(
+        f"⏱️ AUTO SYNC ACTIVE | "
+        f"Har {interval} sekundda"
+    )
+
+    while True:
+        try:
+            await asyncio.sleep(interval)
+
+            print(
+                "⏰ Interval tugadi. "
+                "Auto sync boshlanmoqda..."
+            )
+
+            task = asyncio.create_task(
+                _safe_sync()
+            )
+
+            task.add_done_callback(
+                _sync_task_done
+            )
+
+        except asyncio.CancelledError:
+            print("🛑 AUTO SYNC TO'XTATILDI.")
+            raise
+
+        except Exception as e:
+            print(f"❌ AUTO SYNC LOOP XATOSI: {e}")
+
+            await asyncio.sleep(5)
