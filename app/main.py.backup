@@ -1,0 +1,879 @@
+import asyncio
+import logging
+from html import escape
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart
+from aiogram.types import Message, CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from app.config import BOT_TOKEN
+from app.news.rss import get_latest_news
+
+from app.database.db import (
+    init_db,
+    save_article,
+    remove_article,
+    is_saved,
+    get_saved_articles,
+    get_setting,
+    toggle_notifications,
+    set_default_category,
+)
+
+
+dp = Dispatcher()
+
+CATEGORY_NAMES = {
+    "uzbekistan": "🇺🇿 O‘zbekiston",
+    "world": "🌍 Dunyo",
+    "technology": "💻 Texnologiya",
+    "sport": "⚽ Sport",
+    "economy": "💰 Iqtisodiyot",
+    "science": "🔬 Fan",
+    "gaming": "🎮 Gaming",
+    "cinema": "🎬 Kino",
+}
+
+# Qidiruv holati
+search_users = set()
+
+# Foydalanuvchi qaysi ro‘yxatda yurganini saqlaymiz
+user_news_state = {}
+
+
+def main_menu():
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="🔥 Eng muhim",
+        callback_data="important"
+    )
+
+    builder.button(
+        text="🆕 So‘nggi",
+        callback_data="latest"
+    )
+
+    for key, name in CATEGORY_NAMES.items():
+        builder.button(
+            text=name,
+            callback_data=f"category:{key}"
+        )
+
+    builder.button(
+        text="🔎 Qidirish",
+        callback_data="search"
+    )
+
+    builder.button(
+        text="⭐ Saqlanganlar",
+        callback_data="saved"
+    )
+
+    builder.button(
+        text="⚙️ Sozlamalar",
+        callback_data="settings"
+    )
+
+    builder.adjust(
+        2, 2, 2, 2, 2, 2, 2, 2, 1
+    )
+
+    return builder.as_markup()
+
+
+def shorten(text, limit=500):
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    if len(text) <= limit:
+        return text
+
+    return text[:limit].rsplit(" ", 1)[0] + "..."
+
+
+async def news_keyboard(
+    user_id,
+    article,
+    index,
+    total,
+    state_key
+):
+    builder = InlineKeyboardBuilder()
+
+    if index > 0:
+        builder.button(
+            text="⬅️ Avvalgi",
+            callback_data=f"nav:prev:{state_key}:{index}"
+        )
+
+    if index < total - 1:
+        builder.button(
+            text="Keyingi ➡️",
+            callback_data=f"nav:next:{state_key}:{index}"
+        )
+
+    link = article.get("link", "")
+
+    if link:
+        builder.button(
+            text="🔗 Maqolani o‘qish",
+            url=link
+        )
+
+    saved = await is_saved(user_id, link)
+
+    if saved:
+        builder.button(
+            text="💔 Saqlanganlardan olib tashlash",
+            callback_data=f"unsave:{state_key}:{index}"
+        )
+    else:
+        builder.button(
+            text="⭐ Saqlash",
+            callback_data=f"save:{state_key}:{index}"
+        )
+
+    builder.button(
+        text="🏠 Bosh menyu",
+        callback_data="back"
+    )
+
+    builder.adjust(2, 1, 1, 1)
+
+    return builder.as_markup()
+
+
+def article_caption(article, index, total):
+    title = escape(
+        article.get("title", "Nomsiz yangilik")
+    )
+
+    source = escape(
+        article.get("source", "Noma'lum manba")
+    )
+
+    summary = escape(
+        shorten(article.get("summary", ""), 500)
+    )
+
+    if not summary:
+        summary = "Maqola tafsilotlarini manbada o‘qing."
+
+    return (
+        f"📰 <b>{title}</b>\n\n"
+        f"🏷 <b>Manba:</b> {source}\n\n"
+        f"📝 <b>Qisqacha:</b>\n{summary}\n\n"
+        f"📄 <b>{index + 1}/{total}</b>"
+    )
+
+
+async def show_article(
+    message,
+    user_id,
+    articles,
+    index,
+    state_key,
+):
+    if not articles:
+        await message.edit_text(
+            "😕 Yangilik topilmadi.",
+            reply_markup=main_menu()
+        )
+        return
+
+    index = max(0, min(index, len(articles) - 1))
+
+    article = articles[index]
+
+    user_news_state[user_id] = {
+        "articles": articles,
+        "index": index,
+        "state_key": state_key,
+    }
+
+    caption = article_caption(
+        article,
+        index,
+        len(articles)
+    )
+
+    keyboard = await news_keyboard(
+        user_id,
+        article,
+        index,
+        len(articles),
+        state_key
+    )
+
+    image = article.get("image")
+
+    if image:
+        try:
+            if message.photo:
+                from aiogram.types import InputMediaPhoto
+
+                await message.edit_media(
+                    media=InputMediaPhoto(
+                        media=image,
+                        caption=caption,
+                        parse_mode="HTML"
+                    ),
+                    reply_markup=keyboard
+                )
+            else:
+                await message.delete()
+
+                await message.answer_photo(
+                    photo=image,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+
+            return
+
+        except Exception:
+            logging.exception(
+                "Image display error"
+            )
+
+    try:
+        await message.edit_text(
+            caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            disable_web_page_preview=True
+        )
+    except Exception:
+        await message.answer(
+            caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+            disable_web_page_preview=True
+        )
+
+
+async def open_news(
+    message,
+    user_id,
+    category=None,
+    state_key=None,
+):
+    try:
+        articles = await get_latest_news(
+            category=category
+        )
+
+        if not state_key:
+            state_key = (
+                f"cat_{category}"
+                if category
+                else "latest"
+            )
+
+        await show_article(
+            message,
+            user_id,
+            articles,
+            0,
+            state_key
+        )
+
+    except Exception:
+        logging.exception(
+            "News loading error"
+        )
+
+        await message.edit_text(
+            "❌ Yangiliklarni yuklashda xatolik.",
+            reply_markup=main_menu()
+        )
+
+
+# =========================
+# START
+# =========================
+
+@dp.message(CommandStart())
+async def start_handler(message: Message):
+    await get_setting(message.from_user.id)
+
+    await message.answer(
+        "📰 <b>YIX NEWS</b>\n\n"
+        "Assalomu alaykum! 👋\n\n"
+        "Turli manbalardagi yangiliklarni "
+        "bir joyda kuzating.\n\n"
+        "👇 Kerakli bo‘limni tanlang:",
+        parse_mode="HTML",
+        reply_markup=main_menu()
+    )
+
+
+# =========================
+# LATEST
+# =========================
+
+@dp.callback_query(F.data == "latest")
+async def latest_handler(callback: CallbackQuery):
+    await callback.answer(
+        "📰 Yangiliklar yuklanmoqda..."
+    )
+
+    await open_news(
+        callback.message,
+        callback.from_user.id
+    )
+
+
+# =========================
+# CATEGORY
+# =========================
+
+@dp.callback_query(
+    F.data.startswith("category:")
+)
+async def category_handler(
+    callback: CallbackQuery
+):
+    category = callback.data.split(":", 1)[1]
+
+    if category not in CATEGORY_NAMES:
+        await callback.answer(
+            "❌ Noma'lum kategoriya",
+            show_alert=True
+        )
+        return
+
+    await callback.answer()
+
+    await open_news(
+        callback.message,
+        callback.from_user.id,
+        category=category
+    )
+
+
+# =========================
+# NAVIGATION
+# =========================
+
+@dp.callback_query(
+    F.data.startswith("nav:")
+)
+async def navigation_handler(
+    callback: CallbackQuery
+):
+    parts = callback.data.split(":")
+
+    if len(parts) != 4:
+        await callback.answer("❌ Xatolik")
+        return
+
+    action = parts[1]
+    state_key = parts[2]
+
+    try:
+        current_index = int(parts[3])
+    except ValueError:
+        await callback.answer("❌ Xatolik")
+        return
+
+    state = user_news_state.get(
+        callback.from_user.id
+    )
+
+    if not state:
+        await callback.answer(
+            "⚠️ Yangiliklar eskirgan. Qaytadan oching.",
+            show_alert=True
+        )
+        return
+
+    articles = state["articles"]
+
+    if action == "next":
+        new_index = current_index + 1
+    else:
+        new_index = current_index - 1
+
+    if new_index < 0:
+        new_index = 0
+
+    if new_index >= len(articles):
+        new_index = len(articles) - 1
+
+    await callback.answer()
+
+    await show_article(
+        callback.message,
+        callback.from_user.id,
+        articles,
+        new_index,
+        state_key
+    )
+
+
+# =========================
+# SAVE
+# =========================
+
+@dp.callback_query(
+    F.data.startswith("save:")
+)
+async def save_handler(
+    callback: CallbackQuery
+):
+    parts = callback.data.split(":")
+
+    state_key = parts[1]
+    index = int(parts[2])
+
+    state = user_news_state.get(
+        callback.from_user.id
+    )
+
+    if not state:
+        await callback.answer(
+            "⚠️ Yangilik topilmadi",
+            show_alert=True
+        )
+        return
+
+    articles = state["articles"]
+    article = articles[index]
+
+    await save_article(
+        callback.from_user.id,
+        article
+    )
+
+    await callback.answer(
+        "⭐ Yangilik saqlandi!"
+    )
+
+    await show_article(
+        callback.message,
+        callback.from_user.id,
+        articles,
+        index,
+        state_key
+    )
+
+
+# =========================
+# UNSAVE
+# =========================
+
+@dp.callback_query(
+    F.data.startswith("unsave:")
+)
+async def unsave_handler(
+    callback: CallbackQuery
+):
+    parts = callback.data.split(":")
+
+    state_key = parts[1]
+    index = int(parts[2])
+
+    state = user_news_state.get(
+        callback.from_user.id
+    )
+
+    if not state:
+        await callback.answer(
+            "⚠️ Yangilik topilmadi",
+            show_alert=True
+        )
+        return
+
+    article = state["articles"][index]
+
+    await remove_article(
+        callback.from_user.id,
+        article.get("link", "")
+    )
+
+    await callback.answer(
+        "💔 Saqlanganlardan olib tashlandi"
+    )
+
+    await show_article(
+        callback.message,
+        callback.from_user.id,
+        state["articles"],
+        index,
+        state_key
+    )
+
+
+# =========================
+# SAVED
+# =========================
+
+@dp.callback_query(F.data == "saved")
+async def saved_handler(
+    callback: CallbackQuery
+):
+    await callback.answer()
+
+    articles = await get_saved_articles(
+        callback.from_user.id
+    )
+
+    if not articles:
+        await callback.message.edit_text(
+            "⭐ <b>Saqlanganlar</b>\n\n"
+            "Hozircha saqlangan yangiliklar yo‘q.\n\n"
+            "Yangilikni ochib, "
+            "⭐ <b>Saqlash</b> tugmasini bosing.",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
+        return
+
+    state_key = "saved"
+
+    await show_article(
+        callback.message,
+        callback.from_user.id,
+        articles,
+        0,
+        state_key
+    )
+
+
+# =========================
+# SEARCH
+# =========================
+
+@dp.callback_query(F.data == "search")
+async def search_handler(
+    callback: CallbackQuery
+):
+    search_users.add(
+        callback.from_user.id
+    )
+
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text="❌ Bekor qilish",
+        callback_data="back"
+    )
+
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "🔎 <b>Qidirish</b>\n\n"
+        "Yangilik qidirish uchun "
+        "so‘z yoki iborani yuboring.\n\n"
+        "Masalan:\n"
+        "<code>sun'iy intellekt</code>\n"
+        "<code>O‘zbekiston</code>\n"
+        "<code>Apple</code>",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@dp.message()
+async def message_handler(message: Message):
+    user_id = message.from_user.id
+
+    if user_id not in search_users:
+        return
+
+    search_users.discard(user_id)
+
+    query = message.text.strip().lower()
+
+    if not query:
+        await message.answer(
+            "❌ Qidiruv so‘zi bo‘sh bo‘lmasin."
+        )
+        return
+
+    status = await message.answer(
+        "🔎 Qidirilmoqda..."
+    )
+
+    try:
+        articles = await get_latest_news()
+
+        results = []
+
+        for article in articles:
+            text = " ".join([
+                article.get("title", ""),
+                article.get("summary", ""),
+                article.get("source", ""),
+            ]).lower()
+
+            if query in text:
+                results.append(article)
+
+        if not results:
+            await status.edit_text(
+                f"🔎 <b>{escape(query)}</b>\n\n"
+                "😕 Hech qanday yangilik topilmadi.",
+                parse_mode="HTML",
+                reply_markup=main_menu()
+            )
+            return
+
+        await show_article(
+            status,
+            user_id,
+            results,
+            0,
+            f"search_{query[:20]}"
+        )
+
+    except Exception:
+        logging.exception(
+            "Search error"
+        )
+
+        await status.edit_text(
+            "❌ Qidirishda xatolik yuz berdi.",
+            reply_markup=main_menu()
+        )
+
+
+# =========================
+# SETTINGS
+# =========================
+
+def settings_keyboard(notifications):
+    builder = InlineKeyboardBuilder()
+
+    notification_text = (
+        "🔔 Bildirishnomalar: ON"
+        if notifications
+        else
+        "🔕 Bildirishnomalar: OFF"
+    )
+
+    builder.button(
+        text=notification_text,
+        callback_data="settings:notifications"
+    )
+
+    builder.button(
+        text="📰 Standart kategoriya",
+        callback_data="settings:category"
+    )
+
+    builder.button(
+        text="🏠 Bosh menyu",
+        callback_data="back"
+    )
+
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+@dp.callback_query(F.data == "settings")
+async def settings_handler(
+    callback: CallbackQuery
+):
+    settings = await get_setting(
+        callback.from_user.id
+    )
+
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "⚙️ <b>Sozlamalar</b>\n\n"
+        "Bu yerdan YIX NEWS sozlamalarini "
+        "boshqarishingiz mumkin.",
+        parse_mode="HTML",
+        reply_markup=settings_keyboard(
+            settings["notifications"]
+        )
+    )
+
+
+@dp.callback_query(
+    F.data == "settings:notifications"
+)
+async def notification_handler(
+    callback: CallbackQuery
+):
+    value = await toggle_notifications(
+        callback.from_user.id
+    )
+
+    await callback.answer(
+        "🔔 Bildirishnomalar yoqildi"
+        if value
+        else
+        "🔕 Bildirishnomalar o‘chirildi"
+    )
+
+    await callback.message.edit_reply_markup(
+        reply_markup=settings_keyboard(value)
+    )
+
+
+@dp.callback_query(
+    F.data == "settings:category"
+)
+async def settings_category_handler(
+    callback: CallbackQuery
+):
+    builder = InlineKeyboardBuilder()
+
+    for key, name in CATEGORY_NAMES.items():
+        builder.button(
+            text=name,
+            callback_data=f"setcat:{key}"
+        )
+
+    builder.button(
+        text="🏠 Orqaga",
+        callback_data="settings"
+    )
+
+    builder.adjust(2)
+
+    await callback.answer()
+
+    await callback.message.edit_text(
+        "📰 <b>Standart kategoriya</b>\n\n"
+        "Yangiliklar uchun standart kategoriyani tanlang:",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@dp.callback_query(
+    F.data.startswith("setcat:")
+)
+async def set_category_handler(
+    callback: CallbackQuery
+):
+    category = callback.data.split(":", 1)[1]
+
+    if category not in CATEGORY_NAMES:
+        await callback.answer(
+            "❌ Noma'lum kategoriya"
+        )
+        return
+
+    await set_default_category(
+        callback.from_user.id,
+        category
+    )
+
+    await callback.answer(
+        "✅ Standart kategoriya saqlandi!"
+    )
+
+    settings = await get_setting(
+        callback.from_user.id
+    )
+
+    await callback.message.edit_text(
+        "⚙️ <b>Sozlamalar</b>\n\n"
+        f"📰 Standart kategoriya: "
+        f"{CATEGORY_NAMES[category]}\n\n"
+        "Sozlamalardan kerakli parametrni tanlang.",
+        parse_mode="HTML",
+        reply_markup=settings_keyboard(
+            settings["notifications"]
+        )
+    )
+
+
+# =========================
+# BACK
+# =========================
+
+@dp.callback_query(F.data == "back")
+async def back_handler(
+    callback: CallbackQuery
+):
+    await callback.answer()
+
+    try:
+        # Agar xabar oddiy text bo‘lsa
+        if callback.message.text is not None:
+            await callback.message.edit_text(
+                "📰 <b>YIX NEWS</b>\n\n"
+                "👇 Kerakli bo‘limni tanlang:",
+                parse_mode="HTML",
+                reply_markup=main_menu()
+            )
+
+        # Agar xabar rasmli bo‘lsa
+        else:
+            await callback.message.delete()
+
+            await callback.message.answer(
+                "📰 <b>YIX NEWS</b>\n\n"
+                "👇 Kerakli bo‘limni tanlang:",
+                parse_mode="HTML",
+                reply_markup=main_menu()
+            )
+
+    except Exception:
+        logging.exception("Back handler error")
+
+        try:
+            await callback.message.answer(
+                "📰 <b>YIX NEWS</b>\n\n"
+                "👇 Kerakli bo‘limni tanlang:",
+                parse_mode="HTML",
+                reply_markup=main_menu()
+            )
+        except Exception:
+            pass
+
+
+# =========================
+# IMPORTANT
+# =========================
+
+@dp.callback_query(F.data == "important")
+async def important_handler(
+    callback: CallbackQuery
+):
+    await callback.answer(
+        "🔥 Muhim yangiliklar"
+    )
+
+    await open_news(
+        callback.message,
+        callback.from_user.id
+    )
+
+
+async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s"
+    )
+
+    await init_db()
+
+    bot = Bot(BOT_TOKEN)
+
+    try:
+        await bot.delete_webhook(
+            drop_pending_updates=True
+        )
+
+        await dp.start_polling(bot)
+
+    finally:
+        await bot.session.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

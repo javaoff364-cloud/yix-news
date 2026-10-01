@@ -1,0 +1,385 @@
+from app.news.sources import SOURCES
+
+import asyncio
+import json
+import random
+import aiohttp
+import feedparser
+
+from html import unescape
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 15) "
+        "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml, text/xml, text/html",
+}
+
+
+def clean_text(text: str) -> str:
+    if not text:
+        return ""
+
+    soup = BeautifulSoup(str(text), "html.parser")
+    return unescape(
+        soup.get_text(" ", strip=True)
+    )
+
+
+def get_image(entry):
+    for key in ("media_content", "media_thumbnail"):
+        items = entry.get(key)
+
+        if items:
+            for item in items:
+                if item.get("url"):
+                    return item["url"]
+
+    for item in entry.get("enclosures", []):
+        url = item.get("href") or item.get("url")
+
+        if url:
+            return url
+
+    return None
+
+
+async def fetch_feed(source):
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+
+        async with aiohttp.ClientSession(
+            headers=HEADERS
+        ) as session:
+
+            async with session.get(
+                source["url"],
+                timeout=timeout,
+                allow_redirects=True,
+            ) as response:
+
+                if response.status >= 400:
+                    print(
+                        f"[RSS {response.status}] "
+                        f"{source['name']}"
+                    )
+                    return []
+
+                data = await response.read()
+
+        feed = feedparser.parse(data)
+
+        articles = []
+
+        # MUHIM:
+        # Bu yerda [:20] YO'Q.
+        # Feed qancha qaytarsa, hammasini olamiz.
+        for entry in feed.entries:
+
+            title = clean_text(
+                entry.get("title", "")
+            )
+
+            link = entry.get("link", "")
+
+            if not title or not link:
+                continue
+
+            summary = clean_text(
+                entry.get("summary", "")
+                or entry.get("description", "")
+            )
+
+            published = entry.get(
+                "published",
+                entry.get("updated", ""),
+            )
+
+            articles.append({
+                "source": source["name"],
+                "category": source["category"],
+                "title": title,
+                "summary": summary[:700],
+                "link": link,
+                "image": get_image(entry),
+                "published": published,
+            })
+
+        print(
+            f"[RSS] {source['name']}: "
+            f"{len(articles)} ta"
+        )
+
+        return articles
+
+    except Exception as e:
+        print(
+            f"[RSS ERROR] {source['name']}: {e}"
+        )
+        return []
+
+
+async def fetch_html_source(source):
+    try:
+        timeout = aiohttp.ClientTimeout(total=20)
+
+        async with aiohttp.ClientSession(
+            headers=HEADERS
+        ) as session:
+
+            async with session.get(
+                source["url"],
+                timeout=timeout,
+            ) as response:
+
+                if response.status >= 400:
+                    print(
+                        f"[HTML {response.status}] "
+                        f"{source['name']}"
+                    )
+                    return []
+
+                html = await response.text(
+                    errors="ignore"
+                )
+
+        soup = BeautifulSoup(
+            html,
+            "html.parser"
+        )
+
+        articles = []
+        seen = set()
+
+        # JSON-LD
+        for script in soup.find_all(
+            "script",
+            type="application/ld+json"
+        ):
+
+            try:
+                raw = (
+                    script.string
+                    or script.get_text()
+                )
+
+                data = json.loads(raw)
+
+                objects = (
+                    data
+                    if isinstance(data, list)
+                    else [data]
+                )
+
+                for obj in objects:
+
+                    if not isinstance(obj, dict):
+                        continue
+
+                    if obj.get("@type") not in (
+                        "NewsArticle",
+                        "Article",
+                    ):
+                        continue
+
+                    title = clean_text(
+                        obj.get("headline", "")
+                    )
+
+                    link = obj.get("url", "")
+
+                    if not title or not link:
+                        continue
+
+                    if link in seen:
+                        continue
+
+                    seen.add(link)
+
+                    image = obj.get("image")
+
+                    if isinstance(image, list):
+                        image = (
+                            image[0]
+                            if image
+                            else None
+                        )
+
+                    if isinstance(image, dict):
+                        image = image.get("url")
+
+                    articles.append({
+                        "source": source["name"],
+                        "category": source["category"],
+                        "title": title,
+                        "summary": clean_text(
+                            obj.get(
+                                "description",
+                                ""
+                            )
+                        )[:700],
+                        "link": link,
+                        "image": image,
+                        "published": obj.get(
+                            "datePublished",
+                            ""
+                        ),
+                    })
+
+            except Exception:
+                continue
+
+        # HTML fallback
+        for a in soup.find_all(
+            "a",
+            href=True
+        ):
+
+            title = clean_text(
+                a.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+            href = a.get("href", "")
+
+            if not title or len(title) < 20:
+                continue
+
+            link = urljoin(
+                source["url"],
+                href
+            )
+
+            if link in seen:
+                continue
+
+            if source["name"] == "KUN.UZ":
+                valid = "/news/" in link
+            else:
+                valid = (
+                    "daryo.uz/" in link
+                    and link.rstrip("/") !=
+                    "https://daryo.uz"
+                )
+
+            if not valid:
+                continue
+
+            seen.add(link)
+
+            articles.append({
+                "source": source["name"],
+                "category": source["category"],
+                "title": title,
+                "summary": "",
+                "link": link,
+                "image": None,
+                "published": "",
+            })
+
+        print(
+            f"[HTML] {source['name']}: "
+            f"{len(articles)} ta"
+        )
+
+        return articles
+
+    except Exception as e:
+        print(
+            f"[HTML ERROR] {source['name']}: {e}"
+        )
+        return []
+
+
+async def get_latest_news(category=None):
+
+    active_sources = [
+        source
+        for source in SOURCES
+        if source.get("active", True)
+    ]
+
+    tasks = []
+
+    for source in active_sources:
+
+        if source.get("type") == "html":
+            tasks.append(
+                fetch_html_source(source)
+            )
+        else:
+            tasks.append(
+                fetch_feed(source)
+            )
+
+    results = await asyncio.gather(
+        *tasks,
+        return_exceptions=True
+    )
+
+    articles = []
+
+    for result in results:
+
+        if isinstance(result, Exception):
+            continue
+
+        articles.extend(result)
+
+    # Kategoriya
+    if category:
+        articles = [
+            article
+            for article in articles
+            if article.get("category")
+            == category
+        ]
+
+    # Link bo'yicha duplicate
+    unique = {}
+
+    for article in articles:
+
+        link = article.get("link")
+
+        if not link:
+            continue
+
+        if link not in unique:
+            unique[link] = article
+
+    articles = list(unique.values())
+
+    # Bir xil title'larni ham olib tashlash
+    titles = set()
+    clean_articles = []
+
+    for article in articles:
+
+        title = (
+            article.get("title", "")
+            .strip()
+            .lower()
+        )
+
+        if not title:
+            continue
+
+        if title in titles:
+            continue
+
+        titles.add(title)
+        clean_articles.append(article)
+
+    articles = clean_articles
+
+    # MANBALARNI ARALASHTIRISH
+    random.shuffle(articles)
+
+    return articles
