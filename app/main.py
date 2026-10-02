@@ -18,7 +18,7 @@ async def health(request):
 async def api_news(request):
     try:
         category = request.query.get("category")
-        limit = min(int(request.query.get("limit", "30")), 50)
+        limit = min(int(request.query.get("limit", "50")), 100)
         offset = max(int(request.query.get("offset", "0")), 0)
 
         news = await get_news(
