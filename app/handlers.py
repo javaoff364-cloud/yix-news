@@ -2109,3 +2109,145 @@ async def channel_remove_callback(callback: CallbackQuery):
         ),
         parse_mode="Markdown"
     )
+
+
+# ============================================================
+# YIX NEWS — TEXT COMMANDS
+# ============================================================
+
+@router.message(Command("news"))
+async def news_command(message: Message):
+    """ /news — so'nggi yangiliklar """
+    try:
+        await latest_handler(
+            CallbackQuery(
+                id="command",
+                from_user=message.from_user,
+                chat_instance="command",
+                data="latest",
+                message=message
+            )
+        )
+    except Exception as e:
+        print(f"❌ /news xatosi: {e}")
+        await message.answer(
+            "⚠️ Yangiliklarni yuklashda xatolik yuz berdi."
+        )
+
+
+@router.message(Command("categories"))
+async def categories_command(message: Message):
+    """ /categories — kategoriyalar """
+    try:
+        await message.answer(
+            "📂 <b>Yangiliklar kategoriyasi</b>\n\n"
+            "👇 Kerakli bo‘limni tanlang:",
+            reply_markup=categories_keyboard(),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"❌ /categories xatosi: {e}")
+
+
+@router.message(Command("search"))
+async def search_command(message: Message):
+    """ /search — qidiruv """
+    user_id = message.from_user.id
+
+    search_users.add(user_id)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="◀️ Orqaga",
+                    callback_data="back"
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        "🔎 <b>Yangilik qidirish</b>\n\n"
+        "Qidiruv so‘zini yuboring:",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("saved"))
+async def saved_command(message: Message):
+    """ /saved — saqlangan yangiliklar """
+    try:
+        await saved_handler(
+            CallbackQuery(
+                id="command",
+                from_user=message.from_user,
+                chat_instance="command",
+                data="saved",
+                message=message
+            )
+        )
+    except Exception as e:
+        print(f"❌ /saved xatosi: {e}")
+        await message.answer(
+            "💾 Saqlangan yangiliklarni ochishda xatolik yuz berdi."
+        )
+
+
+
+@router.message(Command("settings"))
+async def settings_command(message: Message):
+    """ /settings — sozlamalar """
+    try:
+        await settings_handler(
+            CallbackQuery(
+                id="command",
+                from_user=message.from_user,
+                chat_instance="command",
+                data="settings",
+                message=message
+            )
+        )
+    except Exception as e:
+        print(f"❌ /settings xatosi: {e}")
+        await message.answer(
+            "⚙️ Sozlamalarni ochishda xatolik yuz berdi."
+        )
+
+
+@router.message(Command("help"))
+async def help_command(message: Message):
+    await message.answer(
+        "❓ <b>YIX News yordam</b>\n\n"
+        "/start — 📰 YIX News’ni boshlash\n"
+        "/news — 📰 So‘nggi yangiliklar\n"
+        "/categories — 📂 Yangiliklar kategoriyalari\n"
+        "/search — 🔎 Yangilik qidirish\n"
+        "/saved — 💾 Saqlangan yangiliklar\n"
+        "/channel — 📢 Telegram kanalingizni ulash\n"
+        "/settings — ⚙️ Sozlamalar\n"
+        "/help — ❓ Yordam\n"
+        "/about — ℹ️ YIX News haqida\n"
+        "/admin — 🛠️ Admin panel\n",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("about"))
+async def about_command(message: Message):
+    await message.answer(
+        "📰 <b>YIX News</b>\n\n"
+        "Yangiliklarni turli manbalardan yig‘ib, "
+        "Telegram orqali qulay ko‘rish, qidirish va "
+        "saqlash imkonini beruvchi YIX Corporation loyihasi.\n\n"
+        "🚀 Tezkor yangiliklar\n"
+        "🔎 Kuchli qidiruv\n"
+        "💾 Saqlanganlar\n"
+        "📢 Telegram kanalga avtomatik joylash\n"
+        "⚙️ Shaxsiy sozlamalar\n\n"
+        "🏢 <b>YIX Corporation</b>\n"
+        "MAKE IT EXIST."
+        ,
+        parse_mode="HTML"
+    )
