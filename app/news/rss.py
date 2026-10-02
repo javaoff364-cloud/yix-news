@@ -947,8 +947,10 @@ async def get_latest_news(
 
     articles = clean_articles
 
-    random.shuffle(
-        articles
-    )
+    # Aralashtiramiz
+    random.shuffle(articles)
+
+    # Render Free uchun xavfsiz limit
+    articles = articles[:300]
 
     return articles

@@ -32,6 +32,28 @@ SOURCES = [
         "active": True,
     },
 
+    {
+        "name": "UzNet Press UZ",
+        "url": "https://uznet.press/rss/today_uz.xml",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "active": True,
+    },
+    {
+        "name": "UzNet Press RU",
+        "url": "https://uznet.press/rss/today_ru.xml",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "active": True,
+    },
+    {
+        "name": "One.uz",
+        "url": "https://one.uz/rss.xml",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "active": True,
+    },
+
     # 🌍 DUNYO
     {
         "name": "BBC News",
