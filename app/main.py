@@ -5,7 +5,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 
 from app.config import BOT_TOKEN
-from app.database.db import init_db
+from app.database.db import init_db, get_news
 from app.handlers import router
 from app.services.sync import sync_news, auto_sync
 from app.services.channel_post import channel_auto_post
@@ -15,6 +15,44 @@ async def health(request):
     return web.Response(text="YIX News is running")
 
 
+async def api_news(request):
+    try:
+        category = request.query.get("category")
+        limit = min(int(request.query.get("limit", "30")), 50)
+        offset = max(int(request.query.get("offset", "0")), 0)
+
+        news = await get_news(
+            category=category,
+            limit=limit,
+            offset=offset,
+        )
+
+        return web.json_response(
+            {
+                "success": True,
+                "count": len(news),
+                "news": news,
+            },
+            headers={
+                "Access-Control-Allow-Origin": "*"
+            }
+        )
+
+    except Exception as e:
+        print(f"❌ API NEWS ERROR: {e}")
+
+        return web.json_response(
+            {
+                "success": False,
+                "error": "News API error"
+            },
+            status=500,
+            headers={
+                "Access-Control-Allow-Origin": "*"
+            }
+        )
+
+
 async def start_web_server():
     port = int(os.getenv("PORT", "10000"))
 
@@ -22,6 +60,7 @@ async def start_web_server():
 
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
+    app.router.add_get("/api/news", api_news)
 
     runner = web.AppRunner(app)
 
