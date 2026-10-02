@@ -9,6 +9,7 @@ from app.database.db import init_db, get_news
 from app.handlers import router
 from app.services.sync import sync_news, auto_sync
 from app.services.channel_post import channel_auto_post
+from app.api.routes import setup_api
 
 
 async def health(request):
@@ -61,6 +62,7 @@ async def start_web_server():
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
     app.router.add_get("/api/news", api_news)
+    setup_api(app)
 
     runner = web.AppRunner(app)
 
