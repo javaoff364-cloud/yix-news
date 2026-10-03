@@ -249,6 +249,12 @@ def main_menu(user_id=None):
                 callback_data="settings"
             )
         ],
+        [
+            InlineKeyboardButton(
+                text="🔑 API Key",
+                callback_data="api_key"
+            )
+        ],
     ]
 
     if user_id in ADMIN_IDS:
@@ -2320,7 +2326,6 @@ async def about_command(message: Message):
         parse_mode="HTML"
     )
 
-
 # =========================================================
 # TELEGRAM WEB LOGIN — PHONE VERIFICATION
 # =========================================================
@@ -2342,9 +2347,10 @@ async def web_login_contact(message: Message):
         return
 
     user = get_user_by_telegram(telegram_id)
+    one_time_api_key = None
 
     if not user:
-        create_user({
+        one_time_api_key = create_user({
             "id": telegram_id,
             "username": message.from_user.username or "",
             "first_name": message.from_user.first_name or "",
@@ -2356,7 +2362,10 @@ async def web_login_contact(message: Message):
         contact.phone_number
     )
 
-    completion_token = create_login_token(telegram_id)
+    completion_token = create_login_token(
+        telegram_id,
+        one_time_api_key=one_time_api_key
+    )
 
     pending_login_tokens.pop(telegram_id, None)
 
@@ -2384,3 +2393,66 @@ async def web_login_contact(message: Message):
         reply_markup=keyboard,
         parse_mode="HTML"
     )
+
+# =========================================================
+# API KEY
+# =========================================================
+
+@router.callback_query(F.data == "api_key")
+async def api_key_handler(callback: CallbackQuery):
+    try:
+        telegram_id = callback.from_user.id
+
+        user = get_user_by_telegram(telegram_id)
+
+        if not user:
+            await callback.answer(
+                "Avval /start orqali akkaunt yarating.",
+                show_alert=True
+            )
+            return
+
+        dashboard_url = (
+            "https://yix-news-web.vercel.app/"
+            "dashboard.html"
+        )
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="🌐 API Dashboard",
+                        url=dashboard_url
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="◀️ Orqaga",
+                        callback_data="back"
+                    )
+                ]
+            ]
+        )
+
+        await callback.message.edit_text(
+            "🔑 <b>YIX News API</b>\n\n"
+            "API keyingizni xavfsiz boshqarish uchun "
+            "Dashboard'dan foydalaning.\n\n"
+            "🌐 Dashboard orqali:\n"
+            "• API keyni ko‘rish\n"
+            "• API keyni nusxalash\n"
+            "• API keyni yangilash\n"
+            "• API usage'ni ko‘rish\n\n"
+            "🛡 API keyni Telegram chatiga yubormaymiz.",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+
+        await callback.answer()
+
+    except Exception as e:
+        print(f"❌ API KEY HANDLER ERROR: {e}")
+        await callback.answer(
+            "API bo‘limini ochishda xatolik.",
+            show_alert=True
+        )

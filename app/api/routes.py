@@ -13,6 +13,7 @@ from app.api.auth import (
     get_user_by_key,
     regenerate_key,
     consume_request,
+    revoke_session,
     DAILY_LIMIT,
 )
 from app.config import BOT_TOKEN
@@ -35,6 +36,14 @@ async def cors_middleware(request, handler):
     )
     response.headers["Access-Control-Allow-Methods"] = (
         "GET, POST, OPTIONS"
+    )
+
+    # API security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=()"
     )
 
     return response
@@ -158,9 +167,17 @@ async def api_session_me(request):
             status=401
         )
 
+    phone = get_phone_status(
+        user["telegram_id"]
+    )
+
     return web.json_response({
         "success": True,
-        "user": user,
+        "user": {
+            **user,
+            "phone_number": phone["phone_number"],
+            "phone_verified": phone["phone_verified"]
+        },
         "daily_limit": DAILY_LIMIT,
         "remaining": max(
             DAILY_LIMIT - user["requests_today"],
@@ -168,6 +185,29 @@ async def api_session_me(request):
         )
     })
 
+async def api_logout(request):
+    """Web sessionni server tomonida darhol bekor qiladi."""
+    token = get_session_token(request)
+
+    if not token:
+        return web.json_response(
+            {
+                "success": False,
+                "error": "Session token required"
+            },
+            status=401
+        )
+
+    revoked = revoke_session(token)
+
+    response = web.json_response({
+        "success": True,
+        "message": "Session revoked"
+    })
+
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
 
 async def api_regenerate(request):
     user = session_user(request)
@@ -357,37 +397,59 @@ async def api_auth_start(request):
 async def api_auth_complete(request):
     """
     Telegram bot telefon tasdiqlagandan keyin yuborgan
-    bir martalik tokenni website session'iga aylantiradi.
+    bir martalik tokenni website sessioniga aylantiradi.
     """
     try:
         data = await request.json()
+
         token = data.get("token")
 
-        if not token:
-            return web.json_response({
-                "success": False,
-                "error": "Login token required"
-            }, status=400)
+        if not isinstance(token, str) or not token:
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Login token required"
+                },
+                status=400
+            )
 
-        telegram_id = consume_login_token(token)
+        login_data = consume_login_token(token)
 
-        if not telegram_id:
-            return web.json_response({
-                "success": False,
-                "error": "Token expired or already used"
-            }, status=401)
+        if not login_data:
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Token expired or already used"
+                },
+                status=401
+            )
+
+        telegram_id = login_data["telegram_id"]
+        one_time_api_key = login_data["one_time_api_key"]
 
         user = get_user_by_telegram(telegram_id)
 
         if not user:
-            return web.json_response({
-                "success": False,
-                "error": "Account not found"
-            }, status=404)
-
-        session_token = create_session(telegram_id)
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Account not found"
+                },
+                status=404
+            )
 
         phone = get_phone_status(telegram_id)
+
+        if not phone["phone_verified"]:
+            return web.json_response(
+                {
+                    "success": False,
+                    "error": "Phone verification required"
+                },
+                status=403
+            )
+
+        session_token = create_session(telegram_id)
 
         response = {
             "success": True,
@@ -398,6 +460,7 @@ async def api_auth_complete(request):
                 "phone_number": phone["phone_number"],
                 "phone_verified": phone["phone_verified"]
             },
+            "api_key": one_time_api_key,
             "daily_limit": DAILY_LIMIT,
             "remaining": max(
                 DAILY_LIMIT - user["requests_today"],
@@ -410,14 +473,25 @@ async def api_auth_complete(request):
 
         return response_obj
 
+    except (ValueError, TypeError):
+        return web.json_response(
+            {
+                "success": False,
+                "error": "Invalid request"
+            },
+            status=400
+        )
+
     except Exception as e:
         print("WEB LOGIN COMPLETE ERROR:", e)
 
-        return web.json_response({
-            "success": False,
-            "error": "Login yakunlanmadi"
-        }, status=500)
-
+        return web.json_response(
+            {
+                "success": False,
+                "error": "Login yakunlanmadi"
+            },
+            status=500
+        )
 
 
 def setup_api(app):
@@ -444,6 +518,11 @@ def setup_api(app):
     app.router.add_get(
         "/api/session/me",
         api_session_me
+    )
+
+    app.router.add_post(
+        "/api/session/logout",
+        api_logout
     )
 
     app.router.add_post(

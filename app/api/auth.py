@@ -43,9 +43,22 @@ def init_api_db():
                 telegram_id INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
-                used INTEGER DEFAULT 0
+                used INTEGER DEFAULT 0,
+                one_time_api_key TEXT
             )
         """)
+
+        login_columns = {
+            row[1]
+            for row in db.execute(
+                "PRAGMA table_info(login_tokens)"
+            ).fetchall()
+        }
+
+        if "one_time_api_key" not in login_columns:
+            db.execute(
+                "ALTER TABLE login_tokens ADD COLUMN one_time_api_key TEXT"
+            )
 
         # Telefon raqami mavjud eski users bazasiga xavfsiz qo'shiladi.
         columns = {
@@ -257,6 +270,37 @@ def get_user_by_session(token):
     return get_user_by_telegram(row[0])
 
 
+
+def revoke_session(token):
+    """Bitta web sessionni darhol bekor qiladi."""
+    if not token:
+        return False
+
+    token_hash = hash_value(token)
+
+    with sqlite3.connect(DB_PATH) as db:
+        result = db.execute("""
+            DELETE FROM sessions
+            WHERE token_hash=?
+        """, (token_hash,))
+
+        db.commit()
+
+    return result.rowcount > 0
+
+
+def revoke_all_sessions(telegram_id):
+    """Foydalanuvchining barcha web sessionlarini bekor qiladi."""
+    with sqlite3.connect(DB_PATH) as db:
+        result = db.execute("""
+            DELETE FROM sessions
+            WHERE telegram_id=?
+        """, (int(telegram_id),))
+
+        db.commit()
+
+    return result.rowcount
+
 def regenerate_key(telegram_id):
     api_key = generate_key()
 
@@ -362,7 +406,7 @@ def consume_request(telegram_id):
 LOGIN_TOKEN_TTL = 300  # 5 daqiqa
 
 
-def create_login_token(telegram_id=0):
+def create_login_token(telegram_id=0, one_time_api_key=None):
     """Website login uchun bir martalik token yaratadi."""
     token = "YIXLOGIN_" + secrets.token_urlsafe(32)
     token_hash = hash_value(token)
@@ -383,14 +427,16 @@ def create_login_token(telegram_id=0):
                 telegram_id,
                 created_at,
                 expires_at,
-                used
+                used,
+                one_time_api_key
             )
-            VALUES (?, ?, ?, ?, 0)
+            VALUES (?, ?, ?, ?, 0, ?)
         """, (
             token_hash,
             int(telegram_id),
             now,
-            expires
+            expires,
+            one_time_api_key
         ))
 
         db.commit()
@@ -463,7 +509,7 @@ def bind_login_token(token, telegram_id):
 
 
 def consume_login_token(token):
-    """Login tokenni bir marta ishlatadi va Telegram ID qaytaradi."""
+    """Login tokenni atomik ravishda bir marta ishlatadi."""
     if not token:
         return None
 
@@ -471,8 +517,10 @@ def consume_login_token(token):
     now = int(time.time())
 
     with sqlite3.connect(DB_PATH) as db:
+        db.execute("BEGIN IMMEDIATE")
+
         row = db.execute("""
-            SELECT telegram_id
+            SELECT telegram_id, one_time_api_key
             FROM login_tokens
             WHERE token_hash=?
               AND expires_at>?
@@ -484,20 +532,33 @@ def consume_login_token(token):
         )).fetchone()
 
         if not row:
+            db.rollback()
             return None
 
         telegram_id = int(row[0])
+        one_time_api_key = row[1]
 
-        db.execute("""
+        result = db.execute("""
             UPDATE login_tokens
             SET used=1
             WHERE token_hash=?
-        """, (token_hash,))
+              AND used=0
+              AND expires_at>?
+        """, (
+            token_hash,
+            now
+        ))
+
+        if result.rowcount != 1:
+            db.rollback()
+            return None
 
         db.commit()
 
-    return telegram_id
-
+    return {
+        "telegram_id": telegram_id,
+        "one_time_api_key": one_time_api_key
+    }
 
 def update_phone(telegram_id, phone_number):
     """Foydalanuvchi o'zi yuborgan Telegram kontaktini saqlaydi."""
