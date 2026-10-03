@@ -8,3 +8,4 @@ __pycache__/
 .pytest_cache/
 *.log
 *.db.backup
+api_users.db
