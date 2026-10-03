@@ -5,6 +5,9 @@ from app.api.auth import (
     verify_telegram,
     create_user,
     create_session,
+    create_login_token,
+    consume_login_token,
+    get_phone_status,
     get_user_by_session,
     get_user_by_telegram,
     get_user_by_key,
@@ -28,7 +31,7 @@ async def cors_middleware(request, handler):
 
     response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
     response.headers["Access-Control-Allow-Headers"] = (
-        "Authorization, Content-Type"
+        "Authorization, Content-Type, X-Session-Token"
     )
     response.headers["Access-Control-Allow-Methods"] = (
         "GET, POST, OPTIONS"
@@ -315,11 +318,123 @@ async def site_news(request):
         )
 
 
+# =========================================================
+# WEB -> TELEGRAM LOGIN
+# =========================================================
+
+async def api_auth_start(request):
+    """
+    Website login tugmasi bosilganda bir martalik
+    Telegram login token yaratadi.
+    """
+    try:
+        token = create_login_token(0)
+
+        telegram_url = (
+            "https://t.me/YIXNewsBot?start="
+            + token
+        )
+
+        response = web.json_response({
+            "success": True,
+            "login_token": token,
+            "telegram_url": telegram_url,
+            "expires_in": 300
+        })
+
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    except Exception as e:
+        print("WEB LOGIN START ERROR:", e)
+
+        return web.json_response({
+            "success": False,
+            "error": "Login boshlanmadi"
+        }, status=500)
+
+
+async def api_auth_complete(request):
+    """
+    Telegram bot telefon tasdiqlagandan keyin yuborgan
+    bir martalik tokenni website session'iga aylantiradi.
+    """
+    try:
+        data = await request.json()
+        token = data.get("token")
+
+        if not token:
+            return web.json_response({
+                "success": False,
+                "error": "Login token required"
+            }, status=400)
+
+        telegram_id = consume_login_token(token)
+
+        if not telegram_id:
+            return web.json_response({
+                "success": False,
+                "error": "Token expired or already used"
+            }, status=401)
+
+        user = get_user_by_telegram(telegram_id)
+
+        if not user:
+            return web.json_response({
+                "success": False,
+                "error": "Account not found"
+            }, status=404)
+
+        session_token = create_session(telegram_id)
+
+        phone = get_phone_status(telegram_id)
+
+        response = {
+            "success": True,
+            "session_token": session_token,
+            "expires_in": 86400,
+            "user": {
+                **user,
+                "phone_number": phone["phone_number"],
+                "phone_verified": phone["phone_verified"]
+            },
+            "daily_limit": DAILY_LIMIT,
+            "remaining": max(
+                DAILY_LIMIT - user["requests_today"],
+                0
+            )
+        }
+
+        response_obj = web.json_response(response)
+        response_obj.headers["Cache-Control"] = "no-store"
+
+        return response_obj
+
+    except Exception as e:
+        print("WEB LOGIN COMPLETE ERROR:", e)
+
+        return web.json_response({
+            "success": False,
+            "error": "Login yakunlanmadi"
+        }, status=500)
+
+
+
 def setup_api(app):
     init_api_db()
 
     if cors_middleware not in app.middlewares:
         app.middlewares.append(cors_middleware)
+
+    app.router.add_post(
+        "/api/auth/start",
+        api_auth_start
+    )
+
+    app.router.add_post(
+        "/api/auth/complete",
+        api_auth_complete
+    )
 
     app.router.add_post(
         "/api/auth/telegram",

@@ -20,6 +20,15 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 
+from app.api.auth import (
+    create_user,
+    get_user_by_telegram,
+    create_login_token,
+    get_login_token,
+    bind_login_token,
+    update_phone,
+)
+
 from app.config import ADMIN_IDS
 from app.database.db import (
     get_news,
@@ -519,8 +528,67 @@ async def download_image(url):
 # START
 # =========================================================
 
+pending_login_tokens = {}
+
 @router.message(CommandStart())
 async def start_handler(message: Message):
+    parts = (message.text or "").split(maxsplit=1)
+    payload = parts[1].strip() if len(parts) > 1 else ""
+
+    if payload.startswith("YIXLOGIN_"):
+        token = get_login_token(payload)
+
+        if not token:
+            await message.answer(
+                "❌ Login havolasi eskirgan yoki noto‘g‘ri."
+            )
+            return
+
+        if token["used"]:
+            await message.answer(
+                "❌ Bu login havolasi allaqachon ishlatilgan."
+            )
+            return
+
+        telegram_id = message.from_user.id
+
+        if token["telegram_id"] == 0:
+            if not bind_login_token(payload, telegram_id):
+                await message.answer(
+                    "❌ Login havolasini tasdiqlab bo‘lmadi."
+                )
+                return
+        elif token["telegram_id"] != telegram_id:
+            await message.answer(
+                "❌ Bu login havolasi boshqa akkauntga tegishli."
+            )
+            return
+
+        pending_login_tokens[telegram_id] = payload
+
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [
+                    KeyboardButton(
+                        text="📱 Telefon raqamimni yuborish",
+                        request_contact=True
+                    )
+                ]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True
+        )
+
+        await message.answer(
+            "🔐 <b>YIX News Dashboard</b>\n\n"
+            "Akkauntingizni tasdiqlash uchun "
+            "o‘zingizning Telegram kontakt raqamingizni yuboring.\n\n"
+            "📱 Quyidagi tugmani bosing:",
+            reply_markup=keyboard,
+            parse_mode="HTML"
+        )
+        return
+
     await message.answer(
         "👋 *Assalomu alaykum!*\n\n"
         "📰 *YIX News* — yangiliklarni bir joyda "
@@ -2249,5 +2317,70 @@ async def about_command(message: Message):
         "🏢 <b>YIX Corporation</b>\n"
         "MAKE IT EXIST."
         ,
+        parse_mode="HTML"
+    )
+
+
+# =========================================================
+# TELEGRAM WEB LOGIN — PHONE VERIFICATION
+# =========================================================
+
+@router.message(F.contact)
+async def web_login_contact(message: Message):
+    telegram_id = message.from_user.id
+    contact = message.contact
+
+    login_token = pending_login_tokens.get(telegram_id)
+
+    if not login_token:
+        return
+
+    if contact.user_id != telegram_id:
+        await message.answer(
+            "❌ Iltimos, o'zingizning Telegram kontakt raqamingizni yuboring."
+        )
+        return
+
+    user = get_user_by_telegram(telegram_id)
+
+    if not user:
+        create_user({
+            "id": telegram_id,
+            "username": message.from_user.username or "",
+            "first_name": message.from_user.first_name or "",
+            "last_name": message.from_user.last_name or "",
+        })
+
+    update_phone(
+        telegram_id,
+        contact.phone_number
+    )
+
+    completion_token = create_login_token(telegram_id)
+
+    pending_login_tokens.pop(telegram_id, None)
+
+    dashboard_url = (
+        "https://yix-news-web.vercel.app/"
+        "dashboard.html?login="
+        + completion_token
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌐 Dashboardni ochish",
+                    url=dashboard_url
+                )
+            ]
+        ]
+    )
+
+    await message.answer(
+        "✅ <b>Telefon raqamingiz tasdiqlandi!</b>\n\n"
+        "🔐 YIX News akkauntingiz tayyor.\n"
+        "🌐 Dashboardga qaytish uchun tugmani bosing.",
+        reply_markup=keyboard,
         parse_mode="HTML"
     )

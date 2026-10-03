@@ -36,6 +36,35 @@ def init_api_db():
             )
         """)
 
+        # Telegram bot orqali web-login uchun bir martalik tokenlar
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS login_tokens (
+                token_hash TEXT PRIMARY KEY,
+                telegram_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used INTEGER DEFAULT 0
+            )
+        """)
+
+        # Telefon raqami mavjud eski users bazasiga xavfsiz qo'shiladi.
+        columns = {
+            row[1]
+            for row in db.execute(
+                "PRAGMA table_info(users)"
+            ).fetchall()
+        }
+
+        if "phone_number" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN phone_number TEXT"
+            )
+
+        if "phone_verified" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0"
+            )
+
         db.commit()
 
 
@@ -324,3 +353,184 @@ def consume_request(telegram_id):
         db.commit()
 
     return True
+
+
+# =========================================================
+# WEB LOGIN TOKENS
+# =========================================================
+
+LOGIN_TOKEN_TTL = 300  # 5 daqiqa
+
+
+def create_login_token(telegram_id=0):
+    """Website login uchun bir martalik token yaratadi."""
+    token = "YIXLOGIN_" + secrets.token_urlsafe(32)
+    token_hash = hash_value(token)
+
+    now = int(time.time())
+    expires = now + LOGIN_TOKEN_TTL
+
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute(
+            "DELETE FROM login_tokens WHERE expires_at <= ?",
+            (now,)
+        )
+
+        db.execute("""
+            INSERT INTO login_tokens
+            (
+                token_hash,
+                telegram_id,
+                created_at,
+                expires_at,
+                used
+            )
+            VALUES (?, ?, ?, ?, 0)
+        """, (
+            token_hash,
+            int(telegram_id),
+            now,
+            expires
+        ))
+
+        db.commit()
+
+    return token
+
+
+def get_login_token(token):
+    """Login token holatini o'qiydi, lekin ishlatib yubormaydi."""
+    if not token:
+        return None
+
+    token_hash = hash_value(token)
+    now = int(time.time())
+
+    with sqlite3.connect(DB_PATH) as db:
+        row = db.execute("""
+            SELECT telegram_id, used
+            FROM login_tokens
+            WHERE token_hash=?
+              AND expires_at>?
+        """, (
+            token_hash,
+            now
+        )).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "telegram_id": int(row[0]),
+        "used": bool(row[1])
+    }
+
+
+def bind_login_token(token, telegram_id):
+    """Website yaratgan tokenni Telegram akkauntiga bog'laydi."""
+    if not token:
+        return False
+
+    token_hash = hash_value(token)
+    now = int(time.time())
+
+    with sqlite3.connect(DB_PATH) as db:
+        row = db.execute("""
+            SELECT used
+            FROM login_tokens
+            WHERE token_hash=?
+              AND expires_at>?
+        """, (
+            token_hash,
+            now
+        )).fetchone()
+
+        if not row or row[0]:
+            return False
+
+        db.execute("""
+            UPDATE login_tokens
+            SET telegram_id=?
+            WHERE token_hash=?
+        """, (
+            int(telegram_id),
+            token_hash
+        ))
+
+        db.commit()
+
+    return True
+
+
+def consume_login_token(token):
+    """Login tokenni bir marta ishlatadi va Telegram ID qaytaradi."""
+    if not token:
+        return None
+
+    token_hash = hash_value(token)
+    now = int(time.time())
+
+    with sqlite3.connect(DB_PATH) as db:
+        row = db.execute("""
+            SELECT telegram_id
+            FROM login_tokens
+            WHERE token_hash=?
+              AND expires_at>?
+              AND used=0
+              AND telegram_id>0
+        """, (
+            token_hash,
+            now
+        )).fetchone()
+
+        if not row:
+            return None
+
+        telegram_id = int(row[0])
+
+        db.execute("""
+            UPDATE login_tokens
+            SET used=1
+            WHERE token_hash=?
+        """, (token_hash,))
+
+        db.commit()
+
+    return telegram_id
+
+
+def update_phone(telegram_id, phone_number):
+    """Foydalanuvchi o'zi yuborgan Telegram kontaktini saqlaydi."""
+    with sqlite3.connect(DB_PATH) as db:
+        db.execute("""
+            UPDATE users
+            SET phone_number=?,
+                phone_verified=1
+            WHERE telegram_id=?
+        """, (
+            phone_number,
+            int(telegram_id)
+        ))
+
+        db.commit()
+
+
+def get_phone_status(telegram_id):
+    with sqlite3.connect(DB_PATH) as db:
+        row = db.execute("""
+            SELECT phone_number, phone_verified
+            FROM users
+            WHERE telegram_id=?
+        """, (int(telegram_id),)).fetchone()
+
+    if not row:
+        return {
+            "phone_number": "",
+            "phone_verified": False
+        }
+
+    return {
+        "phone_number": row[0] or "",
+        "phone_verified": bool(row[1])
+    }
+
