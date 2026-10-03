@@ -3,7 +3,10 @@ from aiohttp import web
 from app.api.auth import (
     init_api_db,
     verify_telegram,
-    create_or_update_user,
+    create_user,
+    create_session,
+    get_user_by_session,
+    get_user_by_telegram,
     get_user_by_key,
     regenerate_key,
     consume_request,
@@ -11,6 +14,27 @@ from app.api.auth import (
 )
 from app.config import BOT_TOKEN
 from app.database.db import get_news
+
+
+ALLOWED_ORIGIN = "https://yix-news-web.vercel.app"
+
+
+@web.middleware
+async def cors_middleware(request, handler):
+    if request.method == "OPTIONS":
+        response = web.Response(status=204)
+    else:
+        response = await handler(request)
+
+    response.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Authorization, Content-Type"
+    )
+    response.headers["Access-Control-Allow-Methods"] = (
+        "GET, POST, OPTIONS"
+    )
+
+    return response
 
 
 def get_api_key(request):
@@ -22,6 +46,15 @@ def get_api_key(request):
     return header[7:].strip()
 
 
+def get_session_token(request):
+    header = request.headers.get("X-Session-Token", "")
+
+    if header:
+        return header.strip()
+
+    return None
+
+
 def auth_user(request):
     key = get_api_key(request)
 
@@ -31,98 +64,94 @@ def auth_user(request):
     return get_user_by_key(key)
 
 
+def session_user(request):
+    token = get_session_token(request)
+
+    if not token:
+        return None
+
+    return get_user_by_session(token)
+
+
 async def api_telegram_login(request):
     try:
         data = await request.json()
-
         raw = data.get("auth")
 
         if not raw:
             return web.json_response(
-                {"success": False, "error": "Telegram auth data required"},
+                {
+                    "success": False,
+                    "error": "Telegram auth data required"
+                },
                 status=400
             )
-
-        if isinstance(raw, dict):
-            from urllib.parse import urlencode
-            raw = urlencode(raw)
 
         telegram = verify_telegram(raw, BOT_TOKEN)
 
         if not telegram:
             return web.json_response(
-                {"success": False, "error": "Invalid Telegram authentication"},
+                {
+                    "success": False,
+                    "error": "Invalid or expired Telegram authentication"
+                },
                 status=401
             )
 
-        api_key = create_or_update_user(telegram)
+        telegram_id = int(telegram["id"])
 
-        if api_key is None:
-            user = get_user_by_key_from_telegram(
-                int(telegram["id"])
+        existing_user = get_user_by_telegram(telegram_id)
+
+        new_account = False
+        api_key = None
+
+        if not existing_user:
+            api_key = create_user(telegram)
+            new_account = True
+
+        session_token = create_session(telegram_id)
+
+        user = get_user_by_telegram(telegram_id)
+
+        response = {
+            "success": True,
+            "new_account": new_account,
+            "session_token": session_token,
+            "expires_in": 86400,
+            "limit": DAILY_LIMIT,
+            "user": user,
+        }
+
+        if api_key:
+            response["api_key"] = api_key
+            response["api_key_message"] = (
+                "Save this API key. "
+                "It will not be shown again unless regenerated."
             )
 
-            return web.json_response({
-                "success": True,
-                "existing": True,
-                "message": "Account already exists. Use your existing API key or regenerate it.",
-                "user": user
-            })
-
-        return web.json_response({
-            "success": True,
-            "existing": False,
-            "api_key": api_key,
-            "limit": DAILY_LIMIT,
-            "user": {
-                "telegram_id": int(telegram["id"]),
-                "username": telegram.get("username", ""),
-                "first_name": telegram.get("first_name", "")
-            }
-        })
+        return web.json_response(response)
 
     except Exception as e:
         print("API LOGIN ERROR:", e)
 
         return web.json_response(
-            {"success": False, "error": "Authentication error"},
+            {
+                "success": False,
+                "error": "Authentication error"
+            },
             status=500
         )
 
 
-def get_user_by_telegram(telegram_id):
-    import sqlite3
-
-    with sqlite3.connect("api_users.db") as db:
-        row = db.execute("""
-            SELECT telegram_id, username, first_name,
-                   last_name, requests_today
-            FROM users
-            WHERE telegram_id=?
-        """, (telegram_id,)).fetchone()
-
-    if not row:
-        return None
-
-    return {
-        "telegram_id": row[0],
-        "username": row[1],
-        "first_name": row[2],
-        "last_name": row[3],
-        "requests_today": row[4],
-        "daily_limit": DAILY_LIMIT,
-    }
-
-
-get_user_by_telegram = get_user_by_telegram
-
-
-async def api_me(request):
-    user = auth_user(request)
+async def api_session_me(request):
+    user = session_user(request)
 
     if not user:
         return web.json_response(
-            {"success": False, "error": "Unauthorized"},
+            {
+                "success": False,
+                "error": "Session expired or unauthorized"
+            },
             status=401
         )
 
@@ -138,11 +167,14 @@ async def api_me(request):
 
 
 async def api_regenerate(request):
-    user = auth_user(request)
+    user = session_user(request)
 
     if not user:
         return web.json_response(
-            {"success": False, "error": "Unauthorized"},
+            {
+                "success": False,
+                "error": "Session expired or unauthorized"
+            },
             status=401
         )
 
@@ -151,7 +183,33 @@ async def api_regenerate(request):
     return web.json_response({
         "success": True,
         "api_key": new_key,
-        "warning": "Save this API key. It will not be shown again."
+        "warning": (
+            "Save this API key. "
+            "The previous API key is now invalid."
+        )
+    })
+
+
+async def api_me(request):
+    user = auth_user(request)
+
+    if not user:
+        return web.json_response(
+            {
+                "success": False,
+                "error": "Unauthorized"
+            },
+            status=401
+        )
+
+    return web.json_response({
+        "success": True,
+        "user": user,
+        "daily_limit": DAILY_LIMIT,
+        "remaining": max(
+            DAILY_LIMIT - user["requests_today"],
+            0
+        )
     })
 
 
@@ -163,7 +221,9 @@ async def protected_news(request):
             {
                 "success": False,
                 "error": "API key required",
-                "message": "Use Authorization: Bearer YIX_xxx"
+                "message": (
+                    "Use Authorization: Bearer YIX_xxx"
+                )
             },
             status=401
         )
@@ -243,7 +303,9 @@ async def site_news(request):
             "news": news
         })
 
-    except Exception:
+    except Exception as e:
+        print("SITE NEWS ERROR:", e)
+
         return web.json_response(
             {
                 "success": False,
@@ -256,9 +318,22 @@ async def site_news(request):
 def setup_api(app):
     init_api_db()
 
+    if cors_middleware not in app.middlewares:
+        app.middlewares.append(cors_middleware)
+
     app.router.add_post(
         "/api/auth/telegram",
         api_telegram_login
+    )
+
+    app.router.add_get(
+        "/api/session/me",
+        api_session_me
+    )
+
+    app.router.add_post(
+        "/api/session/regenerate",
+        api_regenerate
     )
 
     app.router.add_get(
