@@ -9,6 +9,7 @@ from PIL import Image
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
+    WebAppInfo,
     Message,
     CallbackQuery,
     BufferedInputFile,
@@ -229,6 +230,14 @@ def main_menu(user_id=None):
             InlineKeyboardButton(
                 text="📂 Kategoriyalar",
                 callback_data="categories"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🌐 YIX News Mini App",
+                web_app=WebAppInfo(
+                    url="https://yix-news-web.vercel.app/"
+                )
             )
         ],
         [
