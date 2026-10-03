@@ -61,7 +61,6 @@ async def start_web_server():
 
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_get("/api/news", api_news)
     setup_api(app)
 
     runner = web.AppRunner(app)
