@@ -260,8 +260,8 @@ def main_menu(user_id=None):
         ],
         [
             InlineKeyboardButton(
-                text="🔑 API Key",
-                callback_data="api_key"
+                text="🔑 API Keys",
+                url="https://yix-news-web.vercel.app/dashboard.html"
             )
         ],
     ]
@@ -2281,16 +2281,42 @@ async def saved_command(message: Message):
 
 @router.message(Command("settings"))
 async def settings_command(message: Message):
-    """ /settings — sozlamalar """
+    """ /settings — sozlamalar menyusini ochish """
     try:
-        await settings_handler(
-            CallbackQuery(
-                id="command",
-                from_user=message.from_user,
-                chat_instance="command",
-                data="settings",
-                message=message
-            )
+        setting = await get_setting(message.from_user.id)
+
+        notifications = setting.get("notifications", True)
+        default_category = setting.get("default_category", "all")
+
+        await message.answer(
+            "⚙️ <b>Sozlamalar</b>\\n\\n"
+            f"🔔 Bildirishnomalar: "
+            f"{'Yoqilgan' if notifications else 'O‘chirilgan'}\\n"
+            f"📂 Standart kategoriya: "
+            f"{CATEGORIES.get(default_category, 'Barchasi')}",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔔 Bildirishnomani almashtirish",
+                            callback_data="toggle_notifications"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="📂 Standart kategoriyani tanlash",
+                            callback_data="default_category"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="⬅️ Orqaga",
+                            callback_data="back"
+                        )
+                    ]
+                ]
+            ),
+            parse_mode="HTML"
         )
     except Exception as e:
         print(f"❌ /settings xatosi: {e}")

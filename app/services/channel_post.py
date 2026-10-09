@@ -11,6 +11,33 @@ from app.database.db import (
 )
 
 
+def parse_post_datetime(value):
+    """SQLite yoki ISO formatidagi vaqtni datetime ga aylantiradi."""
+    if value is None or value == "":
+        return None
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(
+                value.strip().replace("Z", "+00:00")
+            )
+        except ValueError:
+            print(f"⚠️ Noto‘g‘ri last_post_at qiymati: {value!r}")
+            return None
+    else:
+        return None
+
+    # Ma'lumotlar bazasidagi vaqtlar UTC/naive formatda ishlatiladi.
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(
+            __import__("datetime").timezone.utc
+        ).replace(tzinfo=None)
+
+    return parsed
+
+
 POST_INTERVALS = {
     300: "5 daqiqa",
     600: "10 daqiqa",
@@ -108,18 +135,17 @@ async def channel_auto_post(bot: Bot):
             now = datetime.utcnow()
 
             for channel in channels:
-                last_post = channel.get("last_post_at")
-
-                interval = channel.get(
-                    "interval",
-                    1800,
+                last_post = parse_post_datetime(
+                    channel.get("last_post_at")
                 )
 
-                if last_post:
-                    elapsed = (
-                        now - last_post
-                    ).total_seconds()
+                try:
+                    interval = int(channel.get("interval") or 1800)
+                except (TypeError, ValueError):
+                    interval = 1800
 
+                if last_post is not None:
+                    elapsed = (now - last_post).total_seconds()
                     if elapsed < interval:
                         continue
 
