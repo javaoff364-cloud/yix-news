@@ -31,13 +31,13 @@ def clean_text(text: str) -> str:
     soup = BeautifulSoup(str(text), "html.parser")
     value = unescape(soup.get_text(" ", strip=True))
     noise = [
-        r"\\b\\d+[.,]?\\d*\\s*(views?|ko['’]?rish(?:lar)?|просмотр(?:ов|а)?)\\b",
-        r"\\b\\d+\\s*(seconds?|minutes?|hours?|days?|sekund|daqiqa|soat|kun)\\s*(ago|oldin)\\b",
-        r"\\b(share|read more|continue reading|поделиться|читать далее)\\b",
+        r"\b\\d+[.,]?\\d*\\s*(views?|ko['’]?rish(?:lar)?|просмотр(?:ов|а)?)\b",
+        r"\b\\d+\\s*(seconds?|minutes?|hours?|days?|sekund|daqiqa|soat|kun)\\s*(ago|oldin)\b",
+        r"\b(share|read more|continue reading|поделиться|читать далее)\b",
     ]
     for pattern in noise:
         value = re.sub(pattern, " ", value, flags=re.IGNORECASE)
-    return re.sub(r"\\s+", " ", value).strip(" -|•·")
+    return re.sub(r"\s+", " ", value).strip(" -|•·")
 
 
 def extract_article_metadata(soup, base_url):
