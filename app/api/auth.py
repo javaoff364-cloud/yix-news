@@ -78,6 +78,20 @@ def init_api_db():
                 "ALTER TABLE users ADD COLUMN phone_verified INTEGER DEFAULT 0"
             )
 
+        if "is_banned" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0"
+            )
+
+        if "ban_reason" not in columns:
+            db.execute(
+                "ALTER TABLE users ADD COLUMN ban_reason TEXT DEFAULT ''"
+            )
+
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_telegram_id "
+            "ON sessions(telegram_id)"
+        )
         db.commit()
 
 
@@ -188,6 +202,97 @@ def get_user_by_telegram(telegram_id):
     }
 
 
+
+def list_users(limit=20, offset=0):
+    limit = min(max(int(limit), 1), 100)
+    offset = max(int(offset), 0)
+
+    with sqlite3.connect(DB_PATH) as db:
+        rows = db.execute("""
+            SELECT telegram_id, username, first_name, last_name,
+                   created_at, requests_today, phone_verified,
+                   COALESCE(is_banned, 0), COALESCE(ban_reason, '')
+            FROM users
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
+
+        total = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        banned = db.execute(
+            "SELECT COUNT(*) FROM users WHERE COALESCE(is_banned, 0)=1"
+        ).fetchone()[0]
+
+    users = []
+    for row in rows:
+        users.append({
+            "telegram_id": row[0],
+            "username": row[1] or "",
+            "first_name": row[2] or "",
+            "last_name": row[3] or "",
+            "created_at": row[4],
+            "requests_today": row[5] or 0,
+            "phone_verified": bool(row[6]),
+            "is_banned": bool(row[7]),
+            "ban_reason": row[8] or "",
+        })
+
+    return users, int(total), int(banned)
+
+
+def is_user_banned(telegram_id):
+    with sqlite3.connect(DB_PATH) as db:
+        row = db.execute(
+            "SELECT COALESCE(is_banned, 0) FROM users WHERE telegram_id=?",
+            (int(telegram_id),)
+        ).fetchone()
+
+    return bool(row and row[0])
+
+
+def set_user_banned(telegram_id, banned=True, reason=""):
+    with sqlite3.connect(DB_PATH) as db:
+        result = db.execute(
+            "UPDATE users SET is_banned=?, ban_reason=? WHERE telegram_id=?",
+            (
+                1 if banned else 0,
+                (reason or "")[:300] if banned else "",
+                int(telegram_id),
+            )
+        )
+
+        if banned:
+            db.execute(
+                "DELETE FROM sessions WHERE telegram_id=?",
+                (int(telegram_id),)
+            )
+
+        db.commit()
+
+    return result.rowcount > 0
+
+
+def ensure_user(data):
+    telegram_id = int(data["id"])
+    existing = get_user_by_telegram(telegram_id)
+
+    if existing:
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("""
+                UPDATE users
+                SET username=?, first_name=?, last_name=?
+                WHERE telegram_id=?
+            """, (
+                data.get("username", ""),
+                data.get("first_name", ""),
+                data.get("last_name", ""),
+                telegram_id,
+            ))
+            db.commit()
+
+        return None
+
+    return create_user(data)
+
 def create_user(data):
     telegram_id = int(data["id"])
     api_key = generate_key()
@@ -267,7 +372,12 @@ def get_user_by_session(token):
     if not row:
         return None
 
-    return get_user_by_telegram(row[0])
+    user = get_user_by_telegram(row[0])
+
+    if not user or is_user_banned(row[0]):
+        return None
+
+    return user
 
 
 
@@ -338,6 +448,9 @@ def get_user_by_key(api_key):
 
     telegram_id, username, first_name, last_name, requests, usage_date = row
 
+    if is_user_banned(telegram_id):
+        return None
+
     today = time.strftime("%Y-%m-%d")
 
     if usage_date != today:
@@ -363,6 +476,9 @@ def get_user_by_key(api_key):
 
 
 def consume_request(telegram_id):
+    if is_user_banned(telegram_id):
+        return False
+
     today = time.strftime("%Y-%m-%d")
 
     with sqlite3.connect(DB_PATH) as db:
