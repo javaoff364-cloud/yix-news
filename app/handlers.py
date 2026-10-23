@@ -28,6 +28,10 @@ from app.api.auth import (
     get_login_token,
     bind_login_token,
     update_phone,
+    ensure_user,
+    list_users,
+    set_user_banned,
+    revoke_all_sessions,
 )
 
 from app.config import ADMIN_IDS
@@ -603,6 +607,13 @@ async def start_handler(message: Message):
             parse_mode="HTML"
         )
         return
+
+    ensure_user({
+        "id": message.from_user.id,
+        "username": message.from_user.username or "",
+        "first_name": message.from_user.first_name or "",
+        "last_name": message.from_user.last_name or "",
+    })
 
     await message.answer(
         "👋 *Assalomu alaykum!*\n\n"
@@ -1492,6 +1503,12 @@ def admin_keyboard():
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="👥 Foydalanuvchilar",
+                    callback_data="admin_users:0"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="📊 Statistika",
                     callback_data="admin_stats"
                 )
@@ -1575,10 +1592,13 @@ async def admin_stats(callback: CallbackQuery):
         return
 
     total_news = await get_news_count()
+    _, total_users, banned_users = list_users(limit=1, offset=0)
 
     text = (
         "📊 *YIX NEWS STATISTIKA*\n\n"
         f"📰 Yangiliklar: *{total_news}*\n"
+        f"👥 Foydalanuvchilar: *{total_users}*\n"
+        f"🚫 Banlangan: *{banned_users}*\n"
         f"📡 Faol manbalar: *{source_count()}*\n"
         "🟢 Bot: *Online*"
     )
@@ -1597,6 +1617,122 @@ async def admin_stats(callback: CallbackQuery):
         ),
         parse_mode="Markdown"
     )
+
+
+@router.callback_query(F.data.startswith("admin_users:"))
+async def admin_users(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    page = max(safe_int(callback.data.split(":")[-1]), 0)
+    page_size = 8
+    users, total, banned = list_users(page_size, page * page_size)
+
+    rows = []
+    for user in users:
+        name = user["username"] or user["first_name"] or str(user["telegram_id"])
+        status = "🚫" if user["is_banned"] else "👤"
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{status} {name[:22]} · {user['telegram_id']}",
+                callback_data=f"admin_user:{user['telegram_id']}:{page}"
+            )
+        ])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_users:{page-1}"))
+    if (page + 1) * page_size < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_users:{page+1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([InlineKeyboardButton(text="⬅️ Admin panel", callback_data="admin")])
+
+    await callback.message.edit_text(
+        f"👥 <b>FOYDALANUVCHILAR</b>\n\n"
+        f"Jami: <b>{total}</b> · Banlangan: <b>{banned}</b>\n"
+        f"Sahifa: <b>{page + 1}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("admin_user:"))
+async def admin_user_detail(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+
+    parts = callback.data.split(":")
+    user_id = safe_int(parts[1])
+    page = safe_int(parts[2])
+    users, _, _ = list_users(100, 0)
+    user = next((x for x in users if x["telegram_id"] == user_id), None)
+
+    if not user:
+        await safe_callback_answer(callback, "Foydalanuvchi topilmadi", True)
+        return
+
+    username = ("@" + user["username"]) if user["username"] else "—"
+    full_name = (user["first_name"] + " " + user["last_name"]).strip() or "—"
+    status = "🚫 Banlangan" if user["is_banned"] else "✅ Faol"
+    action = "unban" if user["is_banned"] else "ban"
+    action_text = "✅ Unban" if user["is_banned"] else "🚫 Ban"
+
+    rows = [
+        [InlineKeyboardButton(text=action_text, callback_data=f"admin_act:{action}:{user_id}:{page}")],
+        [InlineKeyboardButton(text="🔒 Sessionlarni bekor qilish", callback_data=f"admin_act:sessions:{user_id}:{page}")],
+        [InlineKeyboardButton(text="⬅️ Ro‘yxat", callback_data=f"admin_users:{page}")]
+    ]
+
+    await callback.message.edit_text(
+        f"👤 <b>FOYDALANUVCHI</b>\n\n"
+        f"🆔 ID: <code>{user_id}</code>\n"
+        f"👤 Ism: {full_name}\n"
+        f"🔗 Username: {username}\n"
+        f"📊 Bugungi API: <b>{user['requests_today']}</b>\n"
+        f"📱 Telefon tasdiqlangan: {'✅' if user['phone_verified'] else '❌'}\n"
+        f"Holat: <b>{status}</b>\n"
+        + (f"Sabab: {user['ban_reason']}\n" if user["ban_reason"] else ""),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(F.data.startswith("admin_act:"))
+async def admin_user_action(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await safe_callback_answer(callback)
+        return
+
+    parts = callback.data.split(":")
+    action = parts[1]
+    user_id = safe_int(parts[2])
+    page = safe_int(parts[3])
+
+    if user_id in ADMIN_IDS and action == "ban":
+        await safe_callback_answer(callback, "Adminni ban qilib bo‘lmaydi", True)
+        return
+
+    if action == "ban":
+        ok = set_user_banned(user_id, True, "Admin tomonidan banlandi")
+        message = "🚫 Foydalanuvchi banlandi" if ok else "Topilmadi"
+    elif action == "unban":
+        ok = set_user_banned(user_id, False)
+        message = "✅ Ban olib tashlandi" if ok else "Topilmadi"
+    elif action == "sessions":
+        count = revoke_all_sessions(user_id)
+        message = f"🔒 {count} ta session bekor qilindi"
+    else:
+        message = "Noma’lum amal"
+
+    await safe_callback_answer(callback, message, True)
+    callback.data = f"admin_user:{user_id}:{page}"
+    await admin_user_detail(callback)
 
 
 @router.callback_query(F.data == "admin_sources")
