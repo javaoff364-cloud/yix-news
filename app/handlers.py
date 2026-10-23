@@ -213,74 +213,38 @@ def rank_search_results(articles, query):
 
 def main_menu(user_id=None):
     buttons = [
-        [
-            InlineKeyboardButton(
-                text="📰 So‘nggi yangiliklar",
-                callback_data="latest"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔥 Muhim yangiliklar",
-                callback_data="important"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔎 Kuchli qidiruv",
-                callback_data="search"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📂 Kategoriyalar",
-                callback_data="categories"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🌐 YIX News Mini App",
-                web_app=WebAppInfo(
-                    url="https://yix-news-web.vercel.app/"
-                )
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💾 Saqlanganlar",
-                callback_data="saved"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📢 Kanallar",
-                callback_data="channel_auto"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="⚙️ Sozlamalar",
-                callback_data="settings"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔑 API Keys",
-                url="https://yix-news-web.vercel.app/dashboard.html"
-            )
-        ],
+        [InlineKeyboardButton(text="📰 So‘nggi yangiliklar", callback_data="latest")],
+        [InlineKeyboardButton(text="🔥 Muhim yangiliklar", callback_data="important")],
+        [InlineKeyboardButton(text="🔎 Qidiruv", callback_data="search")],
+        [InlineKeyboardButton(text="📂 Kategoriyalar", callback_data="categories")],
+        [InlineKeyboardButton(text="💾 Saqlanganlar", callback_data="saved")],
+        [InlineKeyboardButton(text="⚙️ Sozlamalar", callback_data="settings")],
+        [InlineKeyboardButton(text="👨‍💻 Developer", callback_data="developer")],
     ]
-
     if user_id in ADMIN_IDS:
-        buttons.append([
-            InlineKeyboardButton(
-                text="👑 Admin panel",
-                callback_data="admin"
-            )
-        ])
-
+        buttons.append([InlineKeyboardButton(text="👑 Admin panel", callback_data="admin")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
+def developer_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔑 API Dashboard", url="https://yix-news-web.vercel.app/dashboard.html")],
+        [InlineKeyboardButton(text="📚 API Documentation", url="https://yix-news-web.vercel.app/docs.html")],
+        [InlineKeyboardButton(text="📢 Kanal ulash / Auto-post", callback_data="channel_auto")],
+        [InlineKeyboardButton(text="🌐 YIX News Mini App", web_app=WebAppInfo(url="https://yix-news-web.vercel.app/"))],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back")],
+    ])
+
+
+@router.callback_query(F.data == "developer")
+async def developer_menu(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+    await callback.message.edit_text(
+        "👨‍💻 <b>DEVELOPER MARKAZI</b>\n\n"
+        "API, integratsiyalar va Telegram kanal avtomatizatsiyasi shu bo‘limda.",
+        reply_markup=developer_keyboard(),
+        parse_mode="HTML"
+    )
 
 def categories_keyboard():
     rows = []
