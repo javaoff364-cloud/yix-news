@@ -169,7 +169,8 @@ def get_user_by_telegram(telegram_id):
     with sqlite3.connect(DB_PATH) as db:
         row = db.execute("""
             SELECT telegram_id, username, first_name,
-                   last_name, requests_today, usage_date
+                   last_name, requests_today, usage_date,
+                   COALESCE(is_banned, 0), COALESCE(ban_reason, '')
             FROM users
             WHERE telegram_id=?
         """, (telegram_id,)).fetchone()
@@ -177,7 +178,7 @@ def get_user_by_telegram(telegram_id):
     if not row:
         return None
 
-    telegram_id, username, first_name, last_name, requests, usage_date = row
+    telegram_id, username, first_name, last_name, requests, usage_date, is_banned, ban_reason = row
 
     today = time.strftime("%Y-%m-%d")
 
@@ -199,6 +200,8 @@ def get_user_by_telegram(telegram_id):
         "last_name": last_name or "",
         "requests_today": requests or 0,
         "daily_limit": DAILY_LIMIT,
+        "is_banned": bool(is_banned),
+        "ban_reason": ban_reason or "",
     }
 
 
@@ -326,6 +329,9 @@ def create_user(data):
 
 
 def create_session(telegram_id):
+    if is_user_banned(telegram_id):
+        return None
+
     token = generate_session()
     token_hash = hash_value(token)
 
@@ -412,6 +418,9 @@ def revoke_all_sessions(telegram_id):
     return result.rowcount
 
 def regenerate_key(telegram_id):
+    if is_user_banned(telegram_id):
+        return None
+
     api_key = generate_key()
 
     with sqlite3.connect(DB_PATH) as db:
