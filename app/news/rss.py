@@ -258,11 +258,8 @@ def get_image(entry, base_url=None):
 
 
 def fallback_brand_image(title="YIX News"):
-    # Deterministic remote fallback: clean branded card when publishers expose no usable image.
-    from urllib.parse import quote
-    label = clean_text(title)[:80] or "YIX News"
-    return "https://placehold.co/1200x675/ffffff/111827.png?text=" + quote("YIX NEWS\
-" + label)
+    # Neutral branded fallback. Article title stays in the card below, so do not duplicate it here.
+    return "https://placehold.co/1200x675/e5e7eb/9ca3af.png?text=YIX%20NEWS"
 
 
 def extract_meta_image(soup, base_url):
