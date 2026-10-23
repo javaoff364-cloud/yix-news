@@ -85,7 +85,13 @@ async def enrich_article(session, article):
             article["title"] = title
         if description:
             article["summary"] = description
-        if image:\n            article["image"] = image\n    except Exception:\n        pass\n    if not article.get("image"):\n        article["image"] = fallback_brand_image(article.get("title", "YIX News"))\n    return article
+        if image:
+            article["image"] = image
+    except Exception:
+        pass
+    if not article.get("image"):
+        article["image"] = fallback_brand_image(article.get("title", "YIX News"))
+    return article
 
 
 def normalize_image(url, base_url=None):
@@ -255,7 +261,8 @@ def fallback_brand_image(title="YIX News"):
     # Deterministic remote fallback: clean branded card when publishers expose no usable image.
     from urllib.parse import quote
     label = clean_text(title)[:80] or "YIX News"
-    return "https://placehold.co/1200x675/ffffff/111827.png?text=" + quote("YIX NEWS\\n" + label)
+    return "https://placehold.co/1200x675/ffffff/111827.png?text=" + quote("YIX NEWS\
+" + label)
 
 
 def extract_meta_image(soup, base_url):
@@ -631,7 +638,8 @@ async def fetch_feed(source):
                 "title": title,
                 "summary": summary[:700],
                 "link": link,
-                "image": image or fallback_brand_image(title),\n                "published": published,
+                "image": image or fallback_brand_image(title),
+                "published": published,
             })
 
         # RSS thumbnails are often compressed. Enrich a bounded set from article HTML.
@@ -884,7 +892,8 @@ async def fetch_html_source(source):
                     "title": title,
                     "summary": summary,
                     "link": link,
-                    "image": image or fallback_brand_image(title),\n                    "published": "",
+                    "image": image or fallback_brand_image(title),
+                    "published": "",
                 })
 
             print(
