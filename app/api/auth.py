@@ -455,7 +455,7 @@ def get_user_by_key(api_key):
     if not row:
         return None
 
-    telegram_id, username, first_name, last_name, requests, usage_date = row
+    telegram_id, username, first_name, last_name, requests, usage_date, is_banned, ban_reason = row
 
     if is_user_banned(telegram_id):
         return None
