@@ -1,4 +1,5 @@
 import re
+import html
 import aiohttp
 
 from urllib.parse import urlparse, parse_qs, unquote
@@ -1681,8 +1682,8 @@ async def admin_user_detail(callback: CallbackQuery):
         await safe_callback_answer(callback, "Foydalanuvchi topilmadi", True)
         return
 
-    username = ("@" + user["username"]) if user["username"] else "—"
-    full_name = (user["first_name"] + " " + user["last_name"]).strip() or "—"
+    username = ("@" + html.escape(user["username"])) if user["username"] else "—"
+    full_name = html.escape((user["first_name"] + " " + user["last_name"]).strip() or "—")
     status = "🚫 Banlangan" if user["is_banned"] else "✅ Faol"
     action = "unban" if user["is_banned"] else "ban"
     action_text = "✅ Unban" if user["is_banned"] else "🚫 Ban"
@@ -1701,7 +1702,7 @@ async def admin_user_detail(callback: CallbackQuery):
         f"📊 Bugungi API: <b>{user['requests_today']}</b>\n"
         f"📱 Telefon tasdiqlangan: {'✅' if user['phone_verified'] else '❌'}\n"
         f"Holat: <b>{status}</b>\n"
-        + (f"Sabab: {user['ban_reason']}\n" if user["ban_reason"] else ""),
+        + (f"Sabab: {html.escape(user['ban_reason'])}\n" if user["ban_reason"] else ""),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
         parse_mode="HTML"
     )
