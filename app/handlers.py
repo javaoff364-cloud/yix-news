@@ -1670,8 +1670,12 @@ async def admin_user_detail(callback: CallbackQuery):
     parts = callback.data.split(":")
     user_id = safe_int(parts[1])
     page = safe_int(parts[2])
-    users, _, _ = list_users(100, 0)
-    user = next((x for x in users if x["telegram_id"] == user_id), None)
+    user = get_user_by_telegram(user_id)
+    if user:
+        page_users, _, _ = list_users(100, 0)
+        admin_data = next((x for x in page_users if x["telegram_id"] == user_id), None)
+        if admin_data:
+            user.update(admin_data)
 
     if not user:
         await safe_callback_answer(callback, "Foydalanuvchi topilmadi", True)
@@ -1731,8 +1735,14 @@ async def admin_user_action(callback: CallbackQuery):
         message = "Noma’lum amal"
 
     await safe_callback_answer(callback, message, True)
-    callback.data = f"admin_user:{user_id}:{page}"
-    await admin_user_detail(callback)
+    await callback.message.edit_text(
+        f"✅ <b>{message}</b>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👤 Foydalanuvchiga qaytish", callback_data=f"admin_user:{user_id}:{page}")],
+            [InlineKeyboardButton(text="⬅️ Ro‘yxat", callback_data=f"admin_users:{page}")]
+        ]),
+        parse_mode="HTML"
+    )
 
 
 @router.callback_query(F.data == "admin_sources")
