@@ -3,6 +3,7 @@ from app.news.sources import SOURCES
 import asyncio
 import json
 import random
+import re
 import aiohttp
 import feedparser
 
@@ -27,12 +28,68 @@ HEADERS = {
 def clean_text(text: str) -> str:
     if not text:
         return ""
-
     soup = BeautifulSoup(str(text), "html.parser")
+    value = unescape(soup.get_text(" ", strip=True))
+    noise = [
+        r"\b\d+[.,]?\d*\s*(views?|ko['’]?rish(?:lar)?|просмотр(?:ов|а)?)\b",
+        r"\b\d+\s*(seconds?|minutes?|hours?|days?|sekund|daqiqa|soat|kun)\s*(ago|oldin)\b",
+        r"\b(share|read more|continue reading|поделиться|читать далее)\b",
+    ]
+    for pattern in noise:
+        value = re.sub(pattern, " ", value, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", value).strip(" -|•·")
 
-    return unescape(
-        soup.get_text(" ", strip=True)
-    )
+
+def extract_article_metadata(soup, base_url):
+    title = ""
+    description = ""
+    image = extract_meta_image(soup, base_url)
+
+    for attrs in (
+        {"property": "og:title"}, {"name": "twitter:title"}
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            title = clean_text(tag["content"])
+            break
+    if not title and soup.title:
+        title = clean_text(soup.title.get_text(" ", strip=True))
+
+    for attrs in (
+        {"property": "og:description"},
+        {"name": "description"},
+        {"name": "twitter:description"},
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            description = clean_text(tag["content"])
+            if description:
+                break
+
+    return title, description[:700], image
+
+
+async def enrich_article(session, article):
+    link = article.get("link")
+    if not link:
+        return article
+    try:
+        async with session.get(link, timeout=aiohttp.ClientTimeout(total=12), allow_redirects=True) as response:
+            if response.status >= 400:
+                return article
+            body = await response.text(errors="ignore")
+            base_url = str(response.url)
+        soup = BeautifulSoup(body, "html.parser")
+        title, description, image = extract_article_metadata(soup, base_url)
+        if title and len(title) >= 10:
+            article["title"] = title
+        if description:
+            article["summary"] = description
+        if image:
+            article["image"] = image
+    except Exception:
+        pass
+    return article
 
 
 def normalize_image(url, base_url=None):
@@ -574,6 +631,12 @@ async def fetch_feed(source):
                 "image": image,
                 "published": published,
             })
+
+        # RSS thumbnails are often compressed. Enrich a bounded set from article HTML.
+        async with aiohttp.ClientSession(headers=HEADERS) as enrich_session:
+            articles[:12] = await asyncio.gather(*[
+                enrich_article(enrich_session, article) for article in articles[:12]
+            ])
 
         print(
             f"[RSS] {source['name']}: "
