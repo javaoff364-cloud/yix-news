@@ -1037,6 +1037,25 @@ async def fetch_html_source(source):
                     "published_at": None,
                 })
 
+            # Daryo and KUN.UZ listing pages often omit media and dates.
+            # Visit a bounded set of article pages to recover Open Graph/JSON-LD metadata.
+            if source.get("name") in {"Daryo", "KUN.UZ", "Nuz.uz"} and articles:
+                enrich_semaphore = asyncio.Semaphore(4)
+
+                async def enrich_html_item(article):
+                    async with enrich_semaphore:
+                        try:
+                            return await asyncio.wait_for(
+                                enrich_article(session, article),
+                                timeout=8,
+                            )
+                        except asyncio.TimeoutError:
+                            return article
+
+                articles[:24] = await asyncio.gather(*[
+                    enrich_html_item(article) for article in articles[:24]
+                ])
+
             print(
                 f"[HTML] {source['name']}: "
                 f"{len(articles)} ta"
