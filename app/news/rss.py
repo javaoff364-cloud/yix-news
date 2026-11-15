@@ -16,6 +16,18 @@ from urllib.parse import urljoin
 
 HEADERS = {
 
+
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 15) "
+        "AppleWebKit/537.36 Chrome/140 Safari/537.36"
+    ),
+    "Accept": (
+        "application/rss+xml, application/xml, "
+        "text/xml, text/html, */*"
+    ),
+    "Accept-Language": "uz,en;q=0.9,ru;q=0.8",
+}
+
 def parse_published_date(value="", parsed=None):
     """Convert RSS/HTML publication dates to a naive UTC datetime."""
     if parsed:
@@ -40,16 +52,6 @@ def parse_published_date(value="", parsed=None):
 
     return published
 
-    "User-Agent": (
-        "Mozilla/5.0 (Linux; Android 15) "
-        "AppleWebKit/537.36 Chrome/140 Safari/537.36"
-    ),
-    "Accept": (
-        "application/rss+xml, application/xml, "
-        "text/xml, text/html, */*"
-    ),
-    "Accept-Language": "uz,en;q=0.9,ru;q=0.8",
-}
 
 
 def clean_text(text: str) -> str:
