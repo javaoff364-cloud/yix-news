@@ -672,16 +672,23 @@ async def fetch_feed(source):
                 "published_at": parse_published_date(published, published_parsed),
             })
 
-        # Enrich a bounded number of articles concurrently to avoid source bursts.
+        # Enrich only a few articles with a short deadline. Feed sync must
+        # finish quickly enough to persist the fetched headlines on free hosting.
         async with aiohttp.ClientSession(headers=HEADERS) as enrich_session:
-            enrich_semaphore = asyncio.Semaphore(4)
+            enrich_semaphore = asyncio.Semaphore(3)
 
             async def bounded_enrich(article):
                 async with enrich_semaphore:
-                    return await enrich_article(enrich_session, article)
+                    try:
+                        return await asyncio.wait_for(
+                            enrich_article(enrich_session, article),
+                            timeout=5,
+                        )
+                    except asyncio.TimeoutError:
+                        return article
 
-            articles[:12] = await asyncio.gather(*[
-                bounded_enrich(article) for article in articles[:12]
+            articles[:3] = await asyncio.gather(*[
+                bounded_enrich(article) for article in articles[:3]
             ])
 
         print(
@@ -902,14 +909,8 @@ async def fetch_html_source(source):
 
                 summary = ""
 
-                # Keyin maqolaning o'z sahifasidan
-                if not image:
-
-                    image = await fetch_article_image(
-                        session,
-                        link
-                    )
-
+                # Do not fetch every article page during feed sync.
+                # Source-page images are used when available; otherwise the UI fallback is used.
                 # Link ichidagi ota elementdan ham izlash
                 if not image:
 
@@ -961,8 +962,9 @@ async def get_latest_news(
         )
     ]
 
-    # Bound concurrent source requests for small hosting plans.
-    source_semaphore = asyncio.Semaphore(5)
+    # Fetch sources in parallel while keeping a bounded number of connections.
+    # Five workers caused 40+ sources to exceed the 120-second sync deadline.
+    source_semaphore = asyncio.Semaphore(10)
 
     async def fetch_limited(source):
         async with source_semaphore:
