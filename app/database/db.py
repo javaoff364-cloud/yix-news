@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import (, or_
+from sqlalchemy import (
     Column,
     Integer,
     String,
@@ -10,7 +10,6 @@ from sqlalchemy import (, or_
     select,
     delete,
     func,
-    or_,
     text,
     case,
 )
