@@ -440,13 +440,22 @@ async def get_news(
             )
 
         ordering = []
+        # Keep the selected country isolated. International feeds are shared
+        # global coverage and may appear for every country; country-specific
+        # feeds from unrelated countries must never leak into the result.
         if country:
-            ordering.append(case(
-                (News.country == country, 0),
-                (News.country == "international", 1),
-                else_=2,
-            ))
+            if country == "international":
+                query = query.where(News.country == "international")
+            else:
+                query = query.where(
+                    or_(
+                        News.country == country,
+                        News.country == "international",
+                    )
+                )
         if language:
+            # Prefer the selected language, but keep international category
+            # coverage even when the source publishes in another language.
             ordering.append(case(
                 (News.language == language, 0),
                 else_=1,
