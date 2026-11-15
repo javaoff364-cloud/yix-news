@@ -55,6 +55,48 @@ SOURCES = [
         "active": True,
     },
 
+    # Qo‘shimcha O‘zbekiston manbalari
+    {
+        "name": "UzA",
+        "url": "https://uza.uz/uz/rss",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "language": "uz",
+        "active": True,
+    },
+    {
+        "name": "UzNews",
+        "url": "https://uznews.uz/rss",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "language": "ru",
+        "active": True,
+    },
+    {
+        "name": "Podrobno.uz",
+        "url": "https://podrobno.uz/rss/",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "language": "ru",
+        "active": True,
+    },
+    {
+        "name": "Sputnik Uzbekistan",
+        "url": "https://uz.sputniknews.ru/export/rss2/archive/index.xml",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "language": "ru",
+        "active": True,
+    },
+    {
+        "name": "Tashkent Times",
+        "url": "https://tashkenttimes.uz/?format=feed&type=rss",
+        "category": "uzbekistan",
+        "country": "uzbekistan",
+        "language": "en",
+        "active": True,
+    },
+
     # 🌍 DUNYO
     {
         "name": "BBC News",
@@ -234,6 +276,15 @@ SOURCES = [
         "url": "https://finance.yahoo.com/news/rssindex",
         "category": "economy",
         "country": "international",
+        "active": True,
+    },
+
+    {
+        "name": "Spot.uz",
+        "url": "https://www.spot.uz/ru/rss/",
+        "category": "economy",
+        "country": "uzbekistan",
+        "language": "ru",
         "active": True,
     },
 
