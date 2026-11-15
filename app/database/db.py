@@ -137,7 +137,7 @@ async def init_db():
         # Backfill country and language metadata for already stored articles.
         await conn.exec_driver_sql(
             "UPDATE news SET country='uzbekistan', language=CASE "
-            "WHEN source IN ('Gazeta.uz', 'UzNet Press RU') THEN 'ru' ELSE 'uz' END "
+            "WHEN source IN ('Gazeta.uz', 'UzNet Press RU', 'Nuz.uz') THEN 'ru' ELSE 'uz' END "
             "WHERE source IN ('Nuz.uz', 'Gazeta.uz', 'KUN.UZ', 'Daryo', "
             "'UzNet Press UZ', 'UzNet Press RU', 'One.uz')"
         )
