@@ -53,6 +53,7 @@ class News(Base):
 
     summary = Column(Text, default="")
     image = Column(String(2000), nullable=True)
+    video_url = Column(String(2000), nullable=True)
 
     source = Column(String(500), default="")
     category = Column(String(100), default="world")
@@ -123,6 +124,7 @@ async def init_db():
         for statement in (
             "ALTER TABLE news ADD COLUMN country VARCHAR(80) DEFAULT 'international'",
             "ALTER TABLE news ADD COLUMN language VARCHAR(20) DEFAULT 'en'",
+            "ALTER TABLE news ADD COLUMN video_url VARCHAR(2000)",
             "ALTER TABLE user_settings ADD COLUMN country VARCHAR(80) DEFAULT ''",
             "ALTER TABLE user_settings ADD COLUMN language VARCHAR(20) DEFAULT ''",
         ):
@@ -299,6 +301,7 @@ async def save_news(article):
             image=article.get(
                 "image"
             ),
+            video_url=article.get("video_url"),
             source=article.get(
                 "source",
                 ""
@@ -389,6 +392,7 @@ def news_to_dict(news):
         "link": news.link,
         "summary": news.summary or "",
         "image": news.image,
+        "video_url": news.video_url,
         "source": news.source or "",
         "category": news.category or "world",
         "country": news.country or "international",
