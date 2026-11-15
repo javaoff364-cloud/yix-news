@@ -90,6 +90,28 @@ def extract_article_metadata(soup, base_url):
     title = ""
     description = ""
     image = extract_meta_image(soup, base_url)
+    if not image:
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string or script.get_text())
+                objects = data if isinstance(data, list) else [data]
+                for obj in objects:
+                    image = extract_jsonld_image(obj, base_url)
+                    if image:
+                        break
+                    if isinstance(obj, dict) and isinstance(obj.get("@graph"), list):
+                        for item in obj["@graph"]:
+                            image = extract_jsonld_image(item, base_url)
+                            if image:
+                                break
+                    if image:
+                        break
+            except (ValueError, TypeError):
+                continue
+            if image:
+                break
+    if not image:
+        image = extract_article_content_image(soup, base_url)
 
     for attrs in (
         {"property": "og:title"}, {"name": "twitter:title"}
@@ -353,7 +375,7 @@ def get_image(entry, base_url=None):
                 if url:
                     return url
 
-            srcset = img.get("srcset")
+            srcset = img.get("srcset") or img.get("data-srcset") or img.get("data-original-srcset")
 
             if srcset:
                 parts = [
@@ -459,6 +481,21 @@ def extract_jsonld_image(obj, base_url):
     return None
 
 
+def extract_article_content_image(soup, base_url):
+    """Extract media from publisher article markup and linked image files."""
+    for selector in (
+        "article figure", "article picture", "article",
+        "[itemprop='articleBody']", "main figure", "main",
+        ".article-content", ".article-body", ".post-content",
+        ".news-detail", ".single-content",
+    ):
+        container = soup.select_one(selector)
+        image = extract_html_image(container, base_url)
+        if image:
+            return image
+    return extract_html_image(soup, base_url)
+
+
 def extract_html_image(container, base_url):
     """
     Berilgan HTML blokidan rasm qidiradi.
@@ -475,6 +512,10 @@ def extract_html_image(container, base_url):
             "data-src",
             "data-original",
             "data-lazy-src",
+            "data-original-src",
+            "data-lazy",
+            "data-echo",
+            "data-actualsrc",
             "data-image",
             "data-url",
         ):
@@ -515,12 +556,25 @@ def extract_html_image(container, base_url):
                 if url:
                     return url
 
+    # Full-size images linked from article templates (not always present in img.src).
+    for anchor in container.find_all("a", href=True):
+        candidate = anchor.get("href", "").strip()
+        absolute = urljoin(base_url, candidate).lower()
+        if (
+            any(host in absolute for host in ("data.daryo.uz", "storage.kun.uz"))
+            or "nuz.uz/wp-content/uploads/" in absolute
+            or any(ext in absolute for ext in (".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"))
+        ):
+            url = normalize_image(candidate, base_url)
+            if url:
+                return url
+
     # picture source
     for source in container.find_all(
         "source"
     ):
 
-        srcset = source.get("srcset")
+        srcset = source.get("srcset") or source.get("data-srcset")
 
         if not srcset:
             continue
