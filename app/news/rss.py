@@ -639,10 +639,16 @@ async def fetch_feed(source):
                 "published": published,
             })
 
-        # RSS thumbnails are often compressed. Enrich a bounded set from article HTML.
+        # Enrich a bounded number of articles concurrently to avoid source bursts.
         async with aiohttp.ClientSession(headers=HEADERS) as enrich_session:
+            enrich_semaphore = asyncio.Semaphore(4)
+
+            async def bounded_enrich(article):
+                async with enrich_semaphore:
+                    return await enrich_article(enrich_session, article)
+
             articles[:12] = await asyncio.gather(*[
-                enrich_article(enrich_session, article) for article in articles[:12]
+                bounded_enrich(article) for article in articles[:12]
             ])
 
         print(
@@ -923,29 +929,18 @@ async def get_latest_news(
         )
     ]
 
-    tasks = []
+    # Bound concurrent source requests for small hosting plans.
+    source_semaphore = asyncio.Semaphore(5)
 
-    for source in active_sources:
-
-        if source.get("type") == "html":
-
-            tasks.append(
-                fetch_html_source(
-                    source
-                )
-            )
-
-        else:
-
-            tasks.append(
-                fetch_feed(
-                    source
-                )
-            )
+    async def fetch_limited(source):
+        async with source_semaphore:
+            if source.get("type") == "html":
+                return await fetch_html_source(source)
+            return await fetch_feed(source)
 
     results = await asyncio.gather(
-        *tasks,
-        return_exceptions=True
+        *(fetch_limited(source) for source in active_sources),
+        return_exceptions=True,
     )
 
     articles = []
