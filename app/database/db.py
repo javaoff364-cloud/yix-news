@@ -454,7 +454,12 @@ async def get_news(
                     )
                 )
         if language:
-            query = query.where(News.language == language)
+            # Prefer the selected language, but keep international category
+            # coverage even when the source publishes in another language.
+            ordering.append(case(
+                (News.language == language, 0),
+                else_=1,
+            ))
         ordering.extend([News.published_at.desc(), News.id.desc()])
         query = query.order_by(*ordering).limit(limit).offset(offset)
 
