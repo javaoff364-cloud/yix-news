@@ -343,6 +343,23 @@ async def save_news_bulk(articles):
             )
 
             if existing:
+                changed = False
+                new_image = article.get("image")
+                if new_image and "placehold.co" not in str(new_image).lower():
+                    if not existing.image or "placehold.co" in str(existing.image).lower():
+                        existing.image = new_image
+                        changed = True
+                if article.get("video_url") and not existing.video_url:
+                    existing.video_url = article["video_url"]
+                    changed = True
+                if article.get("published_at") and not existing.published_at:
+                    existing.published_at = article["published_at"]
+                    changed = True
+                if article.get("summary") and not existing.summary:
+                    existing.summary = article["summary"]
+                    changed = True
+                if changed:
+                    added += 0
                 continue
 
             news = News(
