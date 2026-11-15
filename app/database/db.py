@@ -358,6 +358,7 @@ async def save_news_bulk(articles):
                 image=article.get(
                     "image"
                 ),
+                video_url=article.get("video_url"),
                 source=article.get(
                     "source",
                     ""
