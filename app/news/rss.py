@@ -652,6 +652,10 @@ async def fetch_feed(source):
                     ""
                 ),
             )
+            published_parsed = (
+                entry.get("published_parsed")
+                or entry.get("updated_parsed")
+            )
 
             image = get_image(
                 entry,
