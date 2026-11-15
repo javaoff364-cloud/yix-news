@@ -28,6 +28,23 @@ HEADERS = {
     "Accept-Language": "uz,en;q=0.9,ru;q=0.8",
 }
 
+def source_locale(source):
+    country = source.get("country", "international")
+    language = source.get("language")
+    if not language:
+        if country == "uzbekistan":
+            language = "ru" if source.get("name") in {"Gazeta.uz", "UzNet Press RU"} else "uz"
+        elif country == "russia":
+            language = "ru"
+        elif country == "turkey":
+            language = "tr"
+        elif country == "india":
+            language = "en"
+        else:
+            language = "en"
+    return country, language
+
+
 def parse_published_date(value="", parsed=None):
     """Convert RSS/HTML publication dates to a naive UTC datetime."""
     if parsed:
@@ -665,6 +682,8 @@ async def fetch_feed(source):
             articles.append({
                 "source": source["name"],
                 "category": source["category"],
+                "country": source_locale(source)[0],
+                "language": source_locale(source)[1],
                 "title": title,
                 "summary": summary[:700],
                 "link": link,
@@ -835,6 +854,8 @@ async def fetch_html_source(source):
                         articles.append({
                             "source": source["name"],
                             "category": source["category"],
+                            "country": source_locale(source)[0],
+                            "language": source_locale(source)[1],
                             "title": title,
                             "summary": clean_text(
                                 obj.get(
@@ -925,6 +946,8 @@ async def fetch_html_source(source):
                 articles.append({
                     "source": source["name"],
                     "category": source["category"],
+                    "country": source_locale(source)[0],
+                    "language": source_locale(source)[1],
                     "title": title,
                     "summary": summary,
                     "link": link,
