@@ -6,6 +6,7 @@ SOURCES = [
         "url": "https://nuz.uz/feed/",
         "category": "uzbekistan",
         "country": "uzbekistan",
+        "language": "ru",
         "active": True,
     },
     {
