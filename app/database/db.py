@@ -137,7 +137,7 @@ async def init_db():
         # Backfill country and language metadata for already stored articles.
         await conn.exec_driver_sql(
             "UPDATE news SET country='uzbekistan', language=CASE "
-            "WHEN source IN ('Gazeta.uz', 'UzNet Press RU') THEN 'ru' ELSE 'uz' END "
+            "WHEN source IN ('Gazeta.uz', 'UzNet Press RU', 'Nuz.uz') THEN 'ru' ELSE 'uz' END "
             "WHERE source IN ('Nuz.uz', 'Gazeta.uz', 'KUN.UZ', 'Daryo', "
             "'UzNet Press UZ', 'UzNet Press RU', 'One.uz')"
         )
@@ -343,6 +343,23 @@ async def save_news_bulk(articles):
             )
 
             if existing:
+                changed = False
+                new_image = article.get("image")
+                if new_image and "placehold.co" not in str(new_image).lower():
+                    if not existing.image or "placehold.co" in str(existing.image).lower():
+                        existing.image = new_image
+                        changed = True
+                if article.get("video_url") and not existing.video_url:
+                    existing.video_url = article["video_url"]
+                    changed = True
+                if article.get("published_at") and not existing.published_at:
+                    existing.published_at = article["published_at"]
+                    changed = True
+                if article.get("summary") and not existing.summary:
+                    existing.summary = article["summary"]
+                    changed = True
+                if changed:
+                    added += 0
                 continue
 
             news = News(
