@@ -132,6 +132,21 @@ async def init_db():
                 if "duplicate column" not in str(migration_error).lower():
                     raise
 
+        # Backfill country and language metadata for already stored articles.
+        await conn.exec_driver_sql(
+            "UPDATE news SET country='uzbekistan', language=CASE "
+            "WHEN source IN ('Gazeta.uz', 'UzNet Press RU') THEN 'ru' ELSE 'uz' END "
+            "WHERE source IN ('Nuz.uz', 'Gazeta.uz', 'KUN.UZ', 'Daryo', "
+            "'UzNet Press UZ', 'UzNet Press RU', 'One.uz')"
+        )
+        await conn.exec_driver_sql(
+            "UPDATE news SET country='usa', language='en' WHERE source='NPR'"
+        )
+        await conn.exec_driver_sql(
+            "UPDATE news SET country='uk', language='en' "
+            "WHERE source IN ('BBC UK', 'The Guardian UK')"
+        )
+
         # SQLite FTS5 virtual table
         await conn.exec_driver_sql(
             """
