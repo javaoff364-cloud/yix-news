@@ -10,6 +10,7 @@ from sqlalchemy import (
     select,
     delete,
     func,
+    or_,
     text,
     case,
 )
