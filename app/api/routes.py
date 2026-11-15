@@ -8,6 +8,7 @@ from app.api.auth import (
     create_login_token,
     consume_login_token,
     get_phone_status,
+    get_login_token,
     get_user_by_session,
     get_user_by_telegram,
     get_user_by_key,
@@ -67,6 +68,17 @@ def get_session_token(request):
     return None
 
 
+def get_pagination(request, default_limit=50):
+    """Validate and bound public pagination parameters."""
+    try:
+        limit = int(request.query.get("limit", str(default_limit)))
+        offset = int(request.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        return None
+
+    return max(1, min(limit, 100)), max(0, offset)
+
+
 def auth_user(request):
     key = get_api_key(request)
 
@@ -122,6 +134,11 @@ async def api_telegram_login(request):
             new_account = True
 
         session_token = create_session(telegram_id)
+        if not session_token:
+            return web.json_response(
+                {"success": False, "error": "Account is disabled"},
+                status=403,
+            )
 
         user = get_user_by_telegram(telegram_id)
 
@@ -141,7 +158,9 @@ async def api_telegram_login(request):
                 "It will not be shown again unless regenerated."
             )
 
-        return web.json_response(response)
+        response_obj = web.json_response(response)
+        response_obj.headers["Cache-Control"] = "no-store"
+        return response_obj
 
     except Exception as e:
         print("API LOGIN ERROR:", e)
@@ -284,15 +303,13 @@ async def protected_news(request):
     try:
         category = request.query.get("category")
 
-        limit = min(
-            int(request.query.get("limit", "30")),
-            100
-        )
-
-        offset = max(
-            int(request.query.get("offset", "0")),
-            0
-        )
+        pagination = get_pagination(request, default_limit=30)
+        if pagination is None:
+            return web.json_response(
+                {"success": False, "error": "Invalid pagination parameters"},
+                status=400,
+            )
+        limit, offset = pagination
 
         news = await get_news(
             category=category,
@@ -324,15 +341,13 @@ async def site_news(request):
     try:
         category = request.query.get("category")
 
-        limit = min(
-            int(request.query.get("limit", "50")),
-            100
-        )
-
-        offset = max(
-            int(request.query.get("offset", "0")),
-            0
-        )
+        pagination = get_pagination(request, default_limit=50)
+        if pagination is None:
+            return web.json_response(
+                {"success": False, "error": "Invalid pagination parameters"},
+                status=400,
+            )
+        limit, offset = pagination
 
         news = await get_news(
             category=category,
@@ -413,43 +428,44 @@ async def api_auth_complete(request):
                 status=400
             )
 
-        login_data = consume_login_token(token)
-
-        if not login_data:
+        # Check prerequisites before consuming the one-time token.
+        token_data = get_login_token(token)
+        if not token_data or token_data["used"] or token_data["telegram_id"] <= 0:
             return web.json_response(
-                {
-                    "success": False,
-                    "error": "Token expired or already used"
-                },
-                status=401
+                {"success": False, "error": "Token expired or already used"},
+                status=401,
             )
 
-        telegram_id = login_data["telegram_id"]
-        one_time_api_key = login_data["one_time_api_key"]
-
+        telegram_id = token_data["telegram_id"]
         user = get_user_by_telegram(telegram_id)
-
         if not user:
             return web.json_response(
-                {
-                    "success": False,
-                    "error": "Account not found"
-                },
-                status=404
+                {"success": False, "error": "Account not found"},
+                status=404,
             )
 
         phone = get_phone_status(telegram_id)
-
         if not phone["phone_verified"]:
             return web.json_response(
-                {
-                    "success": False,
-                    "error": "Phone verification required"
-                },
-                status=403
+                {"success": False, "error": "Phone verification required"},
+                status=403,
             )
 
+        # Atomically consume only after all preconditions pass.
+        login_data = consume_login_token(token)
+        if not login_data or login_data["telegram_id"] != telegram_id:
+            return web.json_response(
+                {"success": False, "error": "Token expired or already used"},
+                status=401,
+            )
+        one_time_api_key = login_data["one_time_api_key"]
+
         session_token = create_session(telegram_id)
+        if not session_token:
+            return web.json_response(
+                {"success": False, "error": "Account is disabled"},
+                status=403,
+            )
 
         response = {
             "success": True,
