@@ -2,7 +2,7 @@ import asyncio
 import traceback
 
 from app.news.rss import get_latest_news
-from app.database.db import save_news
+from app.database.db import save_news_bulk
 
 
 _sync_lock = asyncio.Lock()
@@ -33,23 +33,7 @@ async def sync_news():
 
             print(f"📰 {len(news_items)} ta yangilik olindi.")
 
-            saved_count = 0
-
-            for news in news_items:
-                try:
-                    result = await asyncio.wait_for(
-                        save_news(news),
-                        timeout=10
-                    )
-
-                    if result:
-                        saved_count += 1
-
-                except asyncio.TimeoutError:
-                    print("⏰ Yangilikni bazaga saqlash timeout bo'ldi.")
-
-                except Exception as e:
-                    print(f"⚠️ Yangilikni saqlashda xato: {e}")
+            saved_count = await save_news_bulk(news_items)
 
             print(
                 f"✅ NEWS SYNC TUGADI | "
