@@ -12,6 +12,7 @@ from sqlalchemy import (
     func,
     or_,
     text,
+    case,
 )
 
 from sqlalchemy.ext.asyncio import (
@@ -55,6 +56,8 @@ class News(Base):
 
     source = Column(String(500), default="")
     category = Column(String(100), default="world")
+    country = Column(String(80), default="international")
+    language = Column(String(20), default="en")
 
     published_at = Column(DateTime, nullable=True)
 
@@ -101,6 +104,9 @@ class UserSettings(Base):
         default="all"
     )
 
+    country = Column(String(80), default="")
+    language = Column(String(20), default="")
+
 
 # =========================================================
 # INIT DATABASE
@@ -112,6 +118,19 @@ async def init_db():
         await conn.run_sync(
             Base.metadata.create_all
         )
+
+        # Additive migrations for existing SQLite databases.
+        for statement in (
+            "ALTER TABLE news ADD COLUMN country VARCHAR(80) DEFAULT 'international'",
+            "ALTER TABLE news ADD COLUMN language VARCHAR(20) DEFAULT 'en'",
+            "ALTER TABLE user_settings ADD COLUMN country VARCHAR(80) DEFAULT ''",
+            "ALTER TABLE user_settings ADD COLUMN language VARCHAR(20) DEFAULT ''",
+        ):
+            try:
+                await conn.exec_driver_sql(statement)
+            except Exception as migration_error:
+                if "duplicate column" not in str(migration_error).lower():
+                    raise
 
         # SQLite FTS5 virtual table
         await conn.exec_driver_sql(
@@ -273,6 +292,8 @@ async def save_news(article):
                 "category",
                 "world"
             ),
+            country=article.get("country", "international"),
+            language=article.get("language", "en"),
             published_at=article.get(
                 "published_at"
             ),
@@ -327,6 +348,8 @@ async def save_news_bulk(articles):
                     "category",
                     "world"
                 ),
+                country=article.get("country", "international"),
+                language=article.get("language", "en"),
                 published_at=article.get(
                     "published_at"
                 ),
@@ -353,6 +376,8 @@ def news_to_dict(news):
         "image": news.image,
         "source": news.source or "",
         "category": news.category or "world",
+        "country": news.country or "international",
+        "language": news.language or "en",
         "published_at": (
             news.published_at.isoformat()
             if isinstance(news.published_at, datetime)
@@ -364,7 +389,9 @@ def news_to_dict(news):
 async def get_news(
     category=None,
     limit=50,
-    offset=0
+    offset=0,
+    country=None,
+    language=None,
 ):
     async with SessionLocal() as session:
 
@@ -375,10 +402,20 @@ async def get_news(
                 News.category == category
             )
 
-        query = query.order_by(
-            News.published_at.desc(),
-            News.id.desc()
-        ).limit(limit).offset(offset)
+        ordering = []
+        if country:
+            ordering.append(case(
+                (News.country == country, 0),
+                (News.country == "international", 1),
+                else_=2,
+            ))
+        if language:
+            ordering.append(case(
+                (News.language == language, 0),
+                else_=1,
+            ))
+        ordering.extend([News.published_at.desc(), News.id.desc()])
+        query = query.order_by(*ordering).limit(limit).offset(offset)
 
         result = await session.execute(query)
 
@@ -621,6 +658,34 @@ async def get_setting(user_id):
         return {
             "notifications": setting.notifications,
             "default_category": setting.default_category,
+            "country": setting.country or "",
+            "language": setting.language or "",
+        }
+
+
+async def set_user_preferences(user_id, country=None, language=None):
+    async with SessionLocal() as session:
+        setting = await session.scalar(
+            select(UserSettings).where(UserSettings.user_id == user_id)
+        )
+        if not setting:
+            setting = UserSettings(
+                user_id=user_id,
+                notifications=True,
+                default_category="all",
+                country=country or "",
+                language=language or "",
+            )
+            session.add(setting)
+        else:
+            if country is not None:
+                setting.country = country
+            if language is not None:
+                setting.language = language
+        await session.commit()
+        return {
+            "country": setting.country or "",
+            "language": setting.language or "",
         }
 
 
