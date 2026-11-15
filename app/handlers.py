@@ -93,7 +93,7 @@ COUNTRY_LANGUAGES = {
     "uk": [("en", "🇬🇧 English")],
     "russia": [("ru", "🇷🇺 Русский")],
     "turkey": [("tr", "🇹🇷 Türkçe"), ("en", "🇬🇧 English")],
-    "india": [("en", "🇬🇧 English"), ("hi", "🇮🇳 हिन्दी")],
+    "india": [("en", "🇬🇧 English")],
     "international": [("en", "🇬🇧 English")],
 }
 
