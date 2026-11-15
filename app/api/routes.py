@@ -1,4 +1,5 @@
-from aiohttp import web
+from aiohttp import web, ClientSession, ClientTimeout
+from urllib.parse import urlparse, quote
 
 from app.api.auth import (
     init_api_db,
@@ -48,6 +49,72 @@ async def cors_middleware(request, handler):
     )
 
     return response
+
+
+
+
+ALLOWED_MEDIA_DOMAINS = ("daryo.uz", "kun.uz", "nuz.uz")
+
+
+def is_allowed_media_url(value):
+    try:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return (
+            parsed.scheme == "https"
+            and any(host == domain or host.endswith("." + domain) for domain in ALLOWED_MEDIA_DOMAINS)
+        )
+    except Exception:
+        return False
+
+
+async def api_media(request):
+    """Safely proxy article images from approved Uzbek publisher domains."""
+    image_url = request.query.get("url", "")
+    if not is_allowed_media_url(image_url):
+        return web.Response(status=400, text="Unsupported media URL")
+
+    timeout = ClientTimeout(total=12, connect=5)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; YIXNews/1.0)",
+        "Referer": f"https://{urlparse(image_url).hostname}/",
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+
+    try:
+        async with ClientSession(headers=headers, timeout=timeout) as session:
+            async with session.get(image_url, allow_redirects=False) as upstream:
+                if upstream.status in (301, 302, 303, 307, 308):
+                    target = upstream.headers.get("Location", "")
+                    from urllib.parse import urljoin
+                    image_url = urljoin(image_url, target)
+                    if not is_allowed_media_url(image_url):
+                        return web.Response(status=403, text="Media redirect blocked")
+                    async with session.get(image_url, allow_redirects=False) as redirected:
+                        return await media_response(redirected)
+                return await media_response(upstream)
+    except Exception as exc:
+        print("MEDIA PROXY ERROR:", type(exc).__name__)
+        return web.Response(status=502, text="Image temporarily unavailable")
+
+
+async def media_response(upstream):
+    if upstream.status != 200:
+        return web.Response(status=upstream.status)
+    content_type = upstream.headers.get("Content-Type", "").split(";")[0].strip().lower()
+    if not content_type.startswith("image/"):
+        return web.Response(status=415, text="URL did not return an image")
+    body = await upstream.content.read(6 * 1024 * 1024 + 1)
+    if len(body) > 6 * 1024 * 1024:
+        return web.Response(status=413, text="Image is too large")
+    return web.Response(
+        body=body,
+        content_type=content_type,
+        headers={
+            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 def get_api_key(request):
@@ -372,6 +439,17 @@ async def site_news(request):
             language=language,
         )
 
+        for item in news:
+            image = item.get("image")
+            if (
+                image
+                and item.get("source") in {"Daryo", "KUN.UZ", "Nuz.uz"}
+                and is_allowed_media_url(image)
+            ):
+                item["image"] = (
+                    f"{request.scheme}://{request.host}/api/media?url={quote(image, safe='')}"
+                )
+
         return web.json_response({
             "success": True,
             "count": len(news),
@@ -581,6 +659,11 @@ def setup_api(app):
     app.router.add_get(
         "/api/site-news",
         site_news
+    )
+
+    app.router.add_get(
+        "/api/media",
+        api_media
     )
 
     print("🔑 API authentication enabled")
