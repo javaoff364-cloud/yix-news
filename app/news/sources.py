@@ -417,19 +417,19 @@ SOURCES = [
     # RUSSIA
     {
         "name": "TASS",
-        "url": "https://tass.com/rss/v2.xml",
+        "url": "https://tass.ru/rss/v2.xml",
         "category": "world",
         "country": "russia",
-        "language": "en",
+        "language": "ru",
         "active": True,
     },
     # TURKEY
     {
         "name": "Anadolu Agency",
-        "url": "https://www.aa.com.tr/en/rss/default?cat=guncel",
+        "url": "https://www.aa.com.tr/tr/rss/default?cat=guncel",
         "category": "world",
         "country": "turkey",
-        "language": "en",
+        "language": "tr",
         "active": True,
     },
     # INDIA
