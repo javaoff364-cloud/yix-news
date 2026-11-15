@@ -112,7 +112,74 @@ def extract_article_metadata(soup, base_url):
             if description:
                 break
 
-    return title, description[:700], image
+    video = extract_meta_video(soup, base_url)
+    published = extract_meta_date(soup)
+    return title, description[:700], image, video, published
+
+
+
+def extract_meta_video(soup, base_url):
+    """Find a public video file or embed URL from common article metadata."""
+    for attrs in (
+        {"property": "og:video"},
+        {"property": "og:video:url"},
+        {"property": "og:video:secure_url"},
+        {"name": "twitter:player"},
+        {"name": "twitter:player:stream"},
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            value = urljoin(base_url, tag["content"].strip())
+            if value.startswith(("https://", "http://")):
+                return value
+
+    for video in soup.find_all("video"):
+        source = video.find("source")
+        candidate = (source.get("src") if source else None) or video.get("src")
+        if candidate:
+            value = urljoin(base_url, candidate.strip())
+            if value.startswith(("https://", "http://")):
+                return value
+
+    for iframe in soup.find_all("iframe", src=True):
+        src = urljoin(base_url, iframe["src"].strip())
+        host = src.lower()
+        if any(domain in host for domain in ("youtube.com", "youtu.be", "vimeo.com", "rutube.ru")):
+            return src
+    return None
+
+
+def extract_meta_date(soup):
+    for attrs in (
+        {"property": "article:published_time"},
+        {"property": "og:published_time"},
+        {"name": "pubdate"},
+        {"name": "publishdate"},
+        {"name": "date"},
+        {"itemprop": "datePublished"},
+    ):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            return tag["content"].strip()
+    time_tag = soup.find("time", attrs={"datetime": True})
+    if time_tag:
+        return time_tag.get("datetime", "").strip()
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or script.get_text())
+            objects = data if isinstance(data, list) else [data]
+            for obj in objects:
+                if not isinstance(obj, dict):
+                    continue
+                candidates = [obj, *obj.get("@graph", [])] if isinstance(obj.get("@graph", []), list) else [obj]
+                for item in candidates:
+                    if isinstance(item, dict):
+                        value = item.get("datePublished") or item.get("dateCreated")
+                        if value:
+                            return str(value)
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 async def enrich_article(session, article):
@@ -126,13 +193,17 @@ async def enrich_article(session, article):
             body = await response.text(errors="ignore")
             base_url = str(response.url)
         soup = BeautifulSoup(body, "html.parser")
-        title, description, image = extract_article_metadata(soup, base_url)
+        title, description, image, video, published = extract_article_metadata(soup, base_url)
         if title and len(title) >= 10:
             article["title"] = title
         if description:
             article["summary"] = description
         if image:
             article["image"] = image
+        if video:
+            article["video_url"] = video
+        if published and not article.get("published_at"):
+            article["published_at"] = parse_published_date(published)
     except Exception:
         pass
     if not article.get("image"):
@@ -679,7 +750,7 @@ async def fetch_feed(source):
                 source["url"]
             )
 
-            articles.append({
+            article = {
                 "source": source["name"],
                 "category": source["category"],
                 "country": source_locale(source)[0],
@@ -689,12 +760,16 @@ async def fetch_feed(source):
                 "link": link,
                 "image": image or fallback_brand_image(title),
                 "published_at": parse_published_date(published, published_parsed),
-            })
+            }
+            if not article["image"] or "placehold.co" in str(article["image"]):
+                article["image"] = None
+            articles.append(article)
 
-        # Enrich only a few articles with a short deadline. Feed sync must
-        # finish quickly enough to persist the fetched headlines on free hosting.
+        # Enrich more Uzbekistan publisher items because some RSS feeds omit
+        # article images and publication dates. Keep strict concurrency/time limits.
+        enrich_limit = 24 if source.get("name") in {"Nuz.uz", "Daryo", "KUN.UZ"} else 3
         async with aiohttp.ClientSession(headers=HEADERS) as enrich_session:
-            enrich_semaphore = asyncio.Semaphore(3)
+            enrich_semaphore = asyncio.Semaphore(4)
 
             async def bounded_enrich(article):
                 async with enrich_semaphore:
@@ -706,9 +781,16 @@ async def fetch_feed(source):
                     except asyncio.TimeoutError:
                         return article
 
-            articles[:3] = await asyncio.gather(*[
-                bounded_enrich(article) for article in articles[:3]
+            candidates = [
+                article for article in articles[:enrich_limit]
+                if (not article.get("image") or "placehold.co" in str(article.get("image", "")))
+                or not article.get("published_at")
+            ]
+            enriched = await asyncio.gather(*[
+                bounded_enrich(article) for article in candidates
             ])
+            by_link = {item.get("link"): item for item in enriched}
+            articles = [by_link.get(item.get("link"), item) for item in articles]
 
         print(
             f"[RSS] {source['name']}: "
@@ -954,6 +1036,25 @@ async def fetch_html_source(source):
                     "image": image or fallback_brand_image(title),
                     "published_at": None,
                 })
+
+            # Daryo and KUN.UZ listing pages often omit media and dates.
+            # Visit a bounded set of article pages to recover Open Graph/JSON-LD metadata.
+            if source.get("name") in {"Daryo", "KUN.UZ", "Nuz.uz"} and articles:
+                enrich_semaphore = asyncio.Semaphore(4)
+
+                async def enrich_html_item(article):
+                    async with enrich_semaphore:
+                        try:
+                            return await asyncio.wait_for(
+                                enrich_article(session, article),
+                                timeout=8,
+                            )
+                        except asyncio.TimeoutError:
+                            return article
+
+                articles[:24] = await asyncio.gather(*[
+                    enrich_html_item(article) for article in articles[:24]
+                ])
 
             print(
                 f"[HTML] {source['name']}: "
