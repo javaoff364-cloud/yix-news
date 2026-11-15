@@ -59,10 +59,18 @@ def parse_published_date(value="", parsed=None):
     try:
         published = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
     except (TypeError, ValueError):
-        try:
-            published = parsedate_to_datetime(str(value).strip())
-        except (TypeError, ValueError, OverflowError):
-            return None
+        published = None
+        for date_format in ("%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+            try:
+                published = datetime.strptime(str(value).strip(), date_format)
+                break
+            except (TypeError, ValueError):
+                continue
+        if published is None:
+            try:
+                published = parsedate_to_datetime(str(value).strip())
+            except (TypeError, ValueError, OverflowError):
+                return None
 
     if published.tzinfo is not None:
         published = published.astimezone(timezone.utc).replace(tzinfo=None)
@@ -135,7 +143,7 @@ def extract_article_metadata(soup, base_url):
                 break
 
     video = extract_meta_video(soup, base_url)
-    published = extract_meta_date(soup)
+    published = extract_meta_date(soup, base_url)
     return title, description[:700], image, video, published
 
 
@@ -171,7 +179,7 @@ def extract_meta_video(soup, base_url):
     return None
 
 
-def extract_meta_date(soup):
+def extract_meta_date(soup, base_url=None):
     for attrs in (
         {"property": "article:published_time"},
         {"property": "og:published_time"},
@@ -186,6 +194,11 @@ def extract_meta_date(soup):
     time_tag = soup.find("time", attrs={"datetime": True})
     if time_tag:
         return time_tag.get("datetime", "").strip()
+    time_tag = soup.find("time")
+    if time_tag:
+        text_value = time_tag.get("datetime") or time_tag.get_text(" ", strip=True)
+        if text_value:
+            return text_value.strip()
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or script.get_text())
@@ -201,6 +214,17 @@ def extract_meta_date(soup):
                             return str(value)
         except (ValueError, TypeError):
             continue
+    # Publisher pages sometimes expose dates only in the visible article header.
+    for selector in ("article", "main", "[itemprop='articleBody']"):
+        container = soup.select_one(selector)
+        if container:
+            match = re.search(r"\\b\\d{1,2}[./-]\\d{1,2}[./-]20\\d{2}\\b", container.get_text(" ", strip=True))
+            if match:
+                return match.group(0)
+    if base_url:
+        match = re.search(r"/(20\\d{2})/(\\d{2})/(\\d{2})/", base_url)
+        if match:
+            return "-".join(match.groups())
     return None
 
 
