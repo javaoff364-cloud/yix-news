@@ -340,6 +340,21 @@ async def protected_news(request):
 async def site_news(request):
     try:
         category = request.query.get("category")
+        country = request.query.get("country")
+        language = request.query.get("language")
+
+        allowed_countries = {"uzbekistan", "usa", "uk", "russia", "turkey", "india", "international"}
+        allowed_languages = {"uz", "ru", "en", "tr", "hi"}
+        if country and country not in allowed_countries:
+            return web.json_response(
+                {"success": False, "error": "Unsupported country"},
+                status=400,
+            )
+        if language and language not in allowed_languages:
+            return web.json_response(
+                {"success": False, "error": "Unsupported language"},
+                status=400,
+            )
 
         pagination = get_pagination(request, default_limit=50)
         if pagination is None:
@@ -352,7 +367,9 @@ async def site_news(request):
         news = await get_news(
             category=category,
             limit=limit,
-            offset=offset
+            offset=offset,
+            country=country,
+            language=language,
         )
 
         return web.json_response({

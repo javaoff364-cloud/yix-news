@@ -101,7 +101,8 @@ SOURCES = [
         "name": "NPR",
         "url": "https://feeds.npr.org/1001/rss.xml",
         "category": "world",
-        "country": "international",
+        "country": "usa",
+        "language": "en",
         "active": True,
     },
     {
@@ -394,6 +395,50 @@ SOURCES = [
         "url": "https://variety.com/feed/",
         "category": "cinema",
         "country": "international",
+        "active": True,
+    },
+    # UNITED KINGDOM
+    {
+        "name": "BBC UK",
+        "url": "https://feeds.bbci.co.uk/news/uk/rss.xml",
+        "category": "world",
+        "country": "uk",
+        "language": "en",
+        "active": True,
+    },
+    {
+        "name": "The Guardian UK",
+        "url": "https://www.theguardian.com/uk/rss",
+        "category": "world",
+        "country": "uk",
+        "language": "en",
+        "active": True,
+    },
+    # RUSSIA
+    {
+        "name": "TASS",
+        "url": "https://tass.ru/rss/v2.xml",
+        "category": "world",
+        "country": "russia",
+        "language": "ru",
+        "active": True,
+    },
+    # TURKEY
+    {
+        "name": "Anadolu Agency",
+        "url": "https://www.aa.com.tr/tr/rss/default?cat=guncel",
+        "category": "world",
+        "country": "turkey",
+        "language": "tr",
+        "active": True,
+    },
+    # INDIA
+    {
+        "name": "The Hindu India",
+        "url": "https://www.thehindu.com/news/national/feeder/default.rss",
+        "category": "world",
+        "country": "india",
+        "language": "en",
         "active": True,
     },
 ]
