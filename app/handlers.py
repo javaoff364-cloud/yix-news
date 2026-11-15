@@ -46,6 +46,7 @@ from app.database.db import (
     get_setting,
     toggle_notifications,
     set_default_category,
+    set_user_preferences,
     get_news_count,
     add_user_channel,
     get_user_channels,
@@ -75,6 +76,43 @@ CATEGORIES = {
     "gaming": "🎮 Gaming",
     "cinema": "🎬 Kino",
 }
+
+COUNTRIES = {
+    "uzbekistan": "🇺🇿 O‘zbekiston",
+    "usa": "🇺🇸 AQSH",
+    "uk": "🇬🇧 Buyuk Britaniya",
+    "russia": "🇷🇺 Rossiya",
+    "turkey": "🇹🇷 Turkiya",
+    "india": "🇮🇳 Hindiston",
+    "international": "🌍 Xalqaro yangiliklar",
+}
+
+COUNTRY_LANGUAGES = {
+    "uzbekistan": [("uz", "🇺🇿 O‘zbekcha"), ("ru", "🇷🇺 Русский")],
+    "usa": [("en", "🇬🇧 English")],
+    "uk": [("en", "🇬🇧 English")],
+    "russia": [("ru", "🇷🇺 Русский")],
+    "turkey": [("tr", "🇹🇷 Türkçe"), ("en", "🇬🇧 English")],
+    "india": [("en", "🇬🇧 English"), ("hi", "🇮🇳 हिन्दी")],
+    "international": [("en", "🇬🇧 English")],
+}
+
+def country_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=name, callback_data=f"pref_country:{key}")]
+        for key, name in COUNTRIES.items()
+    ])
+
+
+def language_keyboard(country):
+    languages = COUNTRY_LANGUAGES.get(country, [("en", "🇬🇧 English")])
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"pref_language:{code}")]
+        for code, label in languages
+    ]
+    rows.append([InlineKeyboardButton(text="⬅️ Davlatni qayta tanlash", callback_data="pref_country")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 
 
 # =========================================================
@@ -580,6 +618,16 @@ async def start_handler(message: Message):
         "last_name": message.from_user.last_name or "",
     })
 
+    setting = await get_setting(message.from_user.id)
+    if not setting.get("country") or not setting.get("language"):
+        await message.answer(
+            "👋 *Assalomu alaykum! YIX News'ga xush kelibsiz.*\n\n"
+            "Avval qaysi davlat yangiliklarini ko‘proq ko‘rishni tanlang:",
+            reply_markup=country_keyboard(),
+            parse_mode="Markdown"
+        )
+        return
+
     await message.answer(
         "👋 *Assalomu alaykum!*\n\n"
         "📰 *YIX News* — yangiliklarni bir joyda "
@@ -590,6 +638,47 @@ async def start_handler(message: Message):
         parse_mode="Markdown"
     )
 
+
+# =========================================================
+# COUNTRY / LANGUAGE ONBOARDING
+# =========================================================
+
+@router.callback_query(F.data == "pref_country")
+async def choose_country_handler(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+    await callback.message.edit_text(
+        "🌍 Qaysi davlat yangiliklarini ko‘proq ko‘rmoqchisiz?",
+        reply_markup=country_keyboard()
+    )
+
+
+@router.callback_query(F.data.startswith("pref_country:"))
+async def save_country_handler(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+    country = callback.data.split(":", 1)[1]
+    if country not in COUNTRIES:
+        return
+    await set_user_preferences(callback.from_user.id, country=country, language="")
+    await callback.message.edit_text(
+        f"✅ Davlat: {COUNTRIES[country]}\n\nEndi yangiliklar qaysi tilda ko‘rsatilishini tanlang:",
+        reply_markup=language_keyboard(country)
+    )
+
+
+@router.callback_query(F.data.startswith("pref_language:"))
+async def save_language_handler(callback: CallbackQuery):
+    await safe_callback_answer(callback)
+    language = callback.data.split(":", 1)[1]
+    setting = await get_setting(callback.from_user.id)
+    country = setting.get("country") or "international"
+    allowed = {code for code, _ in COUNTRY_LANGUAGES.get(country, [("en", "English")])}
+    if language not in allowed:
+        return
+    await set_user_preferences(callback.from_user.id, language=language)
+    await callback.message.edit_text(
+        "✅ Davlat va til sozlamalari saqlandi. Endi sizga mos yangiliklarni ko‘rsatamiz.",
+        reply_markup=main_menu(callback.from_user.id)
+    )
 
 # =========================================================
 # CATEGORIES
@@ -1176,9 +1265,12 @@ async def latest_handler(callback: CallbackQuery):
 
     user_id = callback.from_user.id
 
+    setting = await get_setting(user_id)
     articles = await get_news(
         limit=50,
-        offset=0
+        offset=0,
+        country=setting.get("country") or None,
+        language=setting.get("language") or None,
     )
 
     state_key = f"latest_{user_id}"
@@ -1213,10 +1305,13 @@ async def category_handler(callback: CallbackQuery):
     if category not in CATEGORIES:
         return
 
+    setting = await get_setting(callback.from_user.id)
     articles = await get_news(
         category=category,
         limit=50,
-        offset=0
+        offset=0,
+        country=setting.get("country") or None,
+        language=setting.get("language") or None,
     )
 
     state_key = (
@@ -1353,7 +1448,9 @@ async def settings_handler(callback: CallbackQuery):
         f"🔔 Bildirishnomalar: "
         f"{'Yoqilgan' if notifications else 'O‘chirilgan'}\n"
         f"📂 Standart kategoriya: "
-        f"{CATEGORIES.get(default_category, 'Barchasi')}",
+        f"{CATEGORIES.get(default_category, 'Barchasi')}\n"
+        f"🌍 Davlat: {COUNTRIES.get(setting.get('country'), 'Tanlanmagan')}\n"
+        f"🗣 Til: {setting.get('language') or 'Tanlanmagan'}",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -1366,6 +1463,12 @@ async def settings_handler(callback: CallbackQuery):
                     InlineKeyboardButton(
                         text="📂 Standart kategoriyani tanlash",
                         callback_data="default_category"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🌍 Davlat va tilni o‘zgartirish",
+                        callback_data="pref_country"
                     )
                 ],
                 [
