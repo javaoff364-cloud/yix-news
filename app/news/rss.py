@@ -7,12 +7,16 @@ import re
 import aiohttp
 import feedparser
 
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html import unescape
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 
 HEADERS = {
+
+
     "User-Agent": (
         "Mozilla/5.0 (Linux; Android 15) "
         "AppleWebKit/537.36 Chrome/140 Safari/537.36"
@@ -23,6 +27,31 @@ HEADERS = {
     ),
     "Accept-Language": "uz,en;q=0.9,ru;q=0.8",
 }
+
+def parse_published_date(value="", parsed=None):
+    """Convert RSS/HTML publication dates to a naive UTC datetime."""
+    if parsed:
+        try:
+            return datetime(*parsed[:6])
+        except (TypeError, ValueError, OverflowError):
+            pass
+
+    if not value:
+        return None
+
+    try:
+        published = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        try:
+            published = parsedate_to_datetime(str(value).strip())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    if published.tzinfo is not None:
+        published = published.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return published
+
 
 
 def clean_text(text: str) -> str:
@@ -623,6 +652,10 @@ async def fetch_feed(source):
                     ""
                 ),
             )
+            published_parsed = (
+                entry.get("published_parsed")
+                or entry.get("updated_parsed")
+            )
 
             image = get_image(
                 entry,
@@ -636,7 +669,7 @@ async def fetch_feed(source):
                 "summary": summary[:700],
                 "link": link,
                 "image": image or fallback_brand_image(title),
-                "published": published,
+                "published_at": parse_published_date(published, published_parsed),
             })
 
         # Enrich a bounded number of articles concurrently to avoid source bursts.
@@ -804,9 +837,8 @@ async def fetch_html_source(source):
                             )[:700],
                             "link": link,
                             "image": image,
-                            "published": obj.get(
-                                "datePublished",
-                                ""
+                            "published_at": parse_published_date(
+                                obj.get("datePublished", "")
                             ),
                         })
 
@@ -896,7 +928,7 @@ async def fetch_html_source(source):
                     "summary": summary,
                     "link": link,
                     "image": image or fallback_brand_image(title),
-                    "published": "",
+                    "published_at": None,
                 })
 
             print(

@@ -353,7 +353,11 @@ def news_to_dict(news):
         "image": news.image,
         "source": news.source or "",
         "category": news.category or "world",
-        "published_at": news.published_at,
+        "published_at": (
+            news.published_at.isoformat()
+            if isinstance(news.published_at, datetime)
+            else news.published_at
+        ),
     }
 
 
