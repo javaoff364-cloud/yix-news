@@ -845,7 +845,7 @@ async def fetch_feed(source):
 
         # Enrich more Uzbekistan publisher items because some RSS feeds omit
         # article images and publication dates. Keep strict concurrency/time limits.
-        enrich_limit = 24 if source.get("name") in {"Nuz.uz", "Daryo", "KUN.UZ"} else 3
+        enrich_limit = 24 if source.get("name") in {"Nuz.uz", "Daryo", "KUN.UZ", "One.uz"} else 3
         async with aiohttp.ClientSession(headers=HEADERS) as enrich_session:
             enrich_semaphore = asyncio.Semaphore(4)
 
