@@ -53,7 +53,7 @@ async def cors_middleware(request, handler):
 
 
 
-ALLOWED_MEDIA_DOMAINS = ("daryo.uz", "kun.uz", "nuz.uz")
+ALLOWED_MEDIA_DOMAINS = ("daryo.uz", "kun.uz", "nuz.uz", "one.uz")
 
 
 def is_allowed_media_url(value):
@@ -443,7 +443,7 @@ async def site_news(request):
             image = item.get("image")
             if (
                 image
-                and item.get("source") in {"Daryo", "KUN.UZ", "Nuz.uz"}
+                and item.get("source") in {"Daryo", "KUN.UZ", "Nuz.uz", "One.uz"}
                 and is_allowed_media_url(image)
             ):
                 item["image"] = (
